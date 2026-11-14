@@ -7,6 +7,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#070b16">
 <link rel="icon" href="data:,">
+<link rel="manifest" href="manifest.webmanifest">
 <title>小王子 · B-612</title>
 <style>
   :root{
@@ -340,6 +341,19 @@
   #netGo{width:100%;padding:11px;border-radius:10px;border:1px solid rgba(232,199,149,.48);background:rgba(232,199,149,.16);color:#f4ead9;font-family:inherit;font-size:13px;letter-spacing:5px;text-indent:5px}
   #netGo.danger{border-color:rgba(209,86,79,.55);background:rgba(209,86,79,.16)}
   #netClose{width:100%;margin-top:8px;padding:9px;border-radius:10px;border:1px solid rgba(244,234,217,.16);background:rgba(244,234,217,.05);color:rgba(244,234,217,.7);font-family:inherit;font-size:12px;letter-spacing:3px;text-indent:3px}
+
+  @media (orientation:landscape) and (max-height:520px){
+    #joy{width:84px;height:84px;left:calc(env(safe-area-inset-left,0px) + 16px);bottom:calc(env(safe-area-inset-bottom,0px) + 14px)}
+    #knob{width:36px;height:36px;margin:-18px 0 0 -18px}
+    #act{width:76px;height:76px;right:calc(env(safe-area-inset-right,0px) + 16px);bottom:calc(env(safe-area-inset-bottom,0px) + 22px)}
+    #tools{right:calc(env(safe-area-inset-right,0px) + 100px);bottom:calc(env(safe-area-inset-bottom,0px) + 108px);gap:6px}
+    .tool{width:46px;height:46px}
+    #skill{right:calc(env(safe-area-inset-right,0px) + 96px);bottom:calc(env(safe-area-inset-bottom,0px) + 18px);width:54px;height:54px}
+    #quests{top:calc(env(safe-area-inset-top,0px) + 62px);gap:2px}
+    .q{font-size:10px}
+    #inv{bottom:calc(env(safe-area-inset-bottom,0px) + 10px)}
+    .slot{width:40px;height:40px}
+  }
 
   @media (max-height:560px){
     #joy{width:92px;height:92px}
@@ -711,9 +725,9 @@ scene.add(playerLight);
 /* ---------------------------------------------------------------- 地形：球面瓦片高度场 */
 var TILE_DETAIL = 4;
 var DIG_STEP  = 0.30;   // 每挖一层下沉
-var DIG_DEPTH = 2.10;   // 挖到第 7 次时穿透
-var FILL_MAX  = 1.20;   // 堆土上限
+var DIG_DEPTH = 2.10;   // 旧版挖穿深度：只留给旧存档分档用
 var CORE_R    = 10.6;   // 实心内核半径（挖穿后看见的是这层土）
+var DIG_DEPTH_MAX = PLANET_R - CORE_R - 0.30;   // 5.10：挖到内核的物理边界（17 铲），不再卡在 7 铲
 var CR_R      = 0.72;   // 坑口半径：挖出来的是圆口，不是一个三角面
 var CR_PUNCH  = 0.50;   // 归一化半径小于这里 = 已经挖穿的通洞
 var craters   = [];     // 圆坑：{ c: 球面方向, d: 深度, p: 是否挖穿 }
@@ -868,7 +882,7 @@ var _soilStops = [
   [1.05, new THREE.Color('#342618')]
 ];
 function soilGrad(depth, out){
-  var d = clamp(depth / DIG_DEPTH, 0, 1.05);
+  var d = clamp(depth / DIG_DEPTH_MAX, 0, 1.05);
   for (var i=1;i<_soilStops.length;i++){
     if (d <= _soilStops[i][0]){
       var a = _soilStops[i-1], b = _soilStops[i];
@@ -985,7 +999,7 @@ function rebuildOverlay(){
   /* ---- 挖穿的格子：补一圈向内收口的土层侧壁 + 洞底 ----
      之前对 removed 直接 continue，洞壁完全是空的，能直接看到球心方向；
      现在按邻格高度砌到坑底，并稍微向内收，形成“土壁收口”的坑道。 */
-  var H_BOT = -DIG_DEPTH - 0.45;
+  var H_BOT = -DIG_DEPTH_MAX - 0.45;
   var _fa = new V3(), _fb = new V3(), _fc = new V3(), _fd = new V3();
   function taper(v, cc, s){
     return v.clone().multiplyScalar(1 - s).addScaledVector(cc, s).normalize();
@@ -1031,7 +1045,7 @@ function rebuildOverlay(){
   /* ---- 圆坑：碗形坑壁 + 口沿碎土 ----
      以前一个格子整块三角面塌下去：坑口是直角长直边、层级像大色片，还占掉半屏。
      现在按“圆心 + 半径 CR_R”的碗形剖面画，口沿是圆的，边缘撒一圈碎土块做过渡。 */
-  var H_BOT2 = -DIG_DEPTH - 0.45;
+  var H_BOT2 = -DIG_DEPTH_MAX - 0.45;
   var _ct1 = new V3(), _ct2 = new V3(), _cg = new THREE.Color();
   var _cl0 = new V3(), _cl1 = new V3(), _cl2 = new V3(), _cl3 = new V3();
   var SEG = 24, RING = 8;
@@ -3272,7 +3286,7 @@ try {
           if (!Array.isArray(c) || c.length < 4) return;
           var cv = new V3(+c[0] || 0, +c[1] || 0, +c[2] || 0);
           if (cv.lengthSq() < 0.1) return;
-          craters.push({ c: cv.normalize(), d: clamp(+c[3] || 0, 0, DIG_DEPTH), p: !!c[4] });
+          craters.push({ c: cv.normalize(), d: clamp(+c[3] || 0, 0, DIG_DEPTH_MAX), p: !!c[4] });
         });
         markTerrain();
       }
@@ -3648,11 +3662,11 @@ function updateGhost(){
   if (cr){
     ok = true;
     rG = craterRadiusAt(cr, tgt);
-    if (rG < 0) rG = PLANET_R - DIG_DEPTH;
+    if (rG < 0) rG = PLANET_R - DIG_DEPTH_MAX;
     rG += 0.02;
   } else {
-    ok = T.removed || (T.h + DIG_STEP <= FILL_MAX + 1e-4);
-    rG = (T.removed ? PLANET_R - DIG_DEPTH : PLANET_R + T.h + DIG_STEP) + 0.02;
+    ok = true;   /* 堆土不再设高度上限 */
+    rG = (T.removed ? PLANET_R - DIG_DEPTH_MAX : PLANET_R + T.h + DIG_STEP) + 0.02;
   }
   var A = tileVerts[T.v[0]], B = tileVerts[T.v[1]], C = tileVerts[T.v[2]];
   ghost.userData.ok = ok;
@@ -3691,12 +3705,12 @@ function digAt(){
     cr = { c: playerUp.clone(), d: 0, p: false };
     craters.push(cr);
   }
-  cr.d = Math.min(DIG_DEPTH, cr.d + DIG_STEP);
+  cr.d = Math.min(DIG_DEPTH_MAX, cr.d + DIG_STEP);
   state.inv[deep ? 1 : 0]++;
   state.digs++;
   var hit = cr.c.clone().multiplyScalar(PLANET_R - cr.d + 0.16);
-  if (cr.d >= DIG_DEPTH - 1e-4){
-    cr.d = DIG_DEPTH;
+  if (cr.d >= DIG_DEPTH_MAX - 1e-4){
+    cr.d = DIG_DEPTH_MAX;
     cr.p = true;
     state.punched = true;
     spawnSparkle(hit, cr.c.clone().negate(), 18, '#cfe4ff');
@@ -3744,7 +3758,7 @@ function placeAt(){
   if (cr){
     if (cr.p){
       cr.p = false;
-      cr.d = DIG_DEPTH - DIG_STEP;           /* 先把通洞封上 */
+      cr.d = DIG_DEPTH_MAX - DIG_STEP;       /* 先把通洞封上 */
     } else if (cr.d <= DIG_STEP + 1e-4){
       var idx = craters.indexOf(cr);
       if (idx >= 0) craters.splice(idx, 1);   /* 一层土就填平了 */
@@ -3754,17 +3768,16 @@ function placeAt(){
   } else {
     tIdx = findTile(tgt);
     var T = tiles[tIdx];
-    if (!T.removed && T.h + DIG_STEP > FILL_MAX + 1e-4){ toast('这里已经堆到顶了。'); return; }
     if (T.removed){
       T.removed = false;
-      T.h = -DIG_DEPTH;
+      T.h = -DIG_DEPTH_MAX;
     } else {
       T.h = T.h + DIG_STEP;
     }
   }
   state.inv[state.sel]--;
   state.placed++;
-  var gp = Math.max(groundRadiusAt(tgt), PLANET_R - DIG_DEPTH) + 0.12;
+  var gp = Math.max(groundRadiusAt(tgt), PLANET_R - DIG_DEPTH_MAX) + 0.12;
   spawnDust(tgt.clone().multiplyScalar(gp), tgt);
   markTerrain();
   refreshInv();
@@ -4000,7 +4013,8 @@ function refreshQuests(){
 
   /* 挖土 / 建造：目标链最后一段，做完有明确变化 */
   if (!state.punched){
-    items.splice(1, 0, ['挖穿脚下的星球 <b>' + Math.min(state.digs, 7) + '/7</b>', false]);
+    var digNeed = Math.round(DIG_DEPTH_MAX / DIG_STEP);   /* 17：5.1/0.3 的浮点偏差不能 ceil 成 18 */
+    items.splice(1, 0, ['挖穿脚下的星球 <b>' + Math.min(state.digs, digNeed) + '/' + digNeed + '</b>', false]);
   } else if (!state.fell){
     items.splice(1, 0, ['从挖穿的洞里掉下去', false]);
   } else {
@@ -4281,7 +4295,7 @@ function netApplyCrater(c, d, p){
   _wv.set(+c[0] || 0, +c[1] || 0, +c[2] || 0);
   if (_wv.lengthSq() < 0.1) return false;
   _wv.normalize();
-  var nd = clamp(+d || 0, 0, DIG_DEPTH);
+  var nd = clamp(+d || 0, 0, DIG_DEPTH_MAX);
   var cr = netCraterNear(_wv);
   if (!cr){
     craters.push({ c: _wv.clone(), d: nd, p: !!p });
@@ -5385,18 +5399,80 @@ window.addEventListener('pagehide', persist);
 document.addEventListener('visibilitychange', function(){ if (document.hidden) persist(); });
 
 /* ---------------------------------------------------------------- 尺寸 */
+function getViewportSize(){
+  var vv = window.visualViewport;
+  var w = Math.round((vv && vv.width)  || document.documentElement.clientWidth  || window.innerWidth  || 360);
+  var h = Math.round((vv && vv.height) || document.documentElement.clientHeight || window.innerHeight || 640);
+  return { w: w, h: h };
+}
+var _vpApplied = { w: 0, h: 0 };
 function onResize(){
-  var w = window.innerWidth, h = window.innerHeight;
+  var s = getViewportSize(), w = s.w, h = s.h;
+  _vpApplied.w = w; _vpApplied.h = h;
   camera.aspect = w/h;
   camera.fov = (h > w) ? 68 : 58;
   camera.updateProjectionMatrix();
   var dpr = Math.min(window.devicePixelRatio || 1, 2);
   renderer.setPixelRatio(dpr);
   renderer.setSize(w, h, false);
+  /* 有些 WebView 的 100vh 在转屏后不刷新，用真实像素兜底 */
+  document.documentElement.style.setProperty('--vh', (h * 0.01) + 'px');
+  document.documentElement.style.setProperty('--vw', (w * 0.01) + 'px');
+}
+/* 转屏后 1.5s 内轮询：部分机型既不派发 resize，orientationchange 时宽高也还是旧值 */
+var _vpTimer = null;
+function watchViewport(){
+  if (_vpTimer) clearInterval(_vpTimer);
+  var t0 = Date.now(), last = getViewportSize();
+  _vpTimer = setInterval(function(){
+    var s = getViewportSize();
+    if (s.w !== last.w || s.h !== last.h){ last = s; onResize(); }
+    if (Date.now() - t0 > 1500){ clearInterval(_vpTimer); _vpTimer = null; }
+  }, 100);
+}
+function onOrientChange(){
+  onResize();
+  watchViewport();
+  setTimeout(onResize, 260);
+  setTimeout(onResize, 620);
 }
 window.addEventListener('resize', onResize);
-window.addEventListener('orientationchange', function(){ setTimeout(onResize, 220); });
+window.addEventListener('pageshow', onOrientChange);
+window.addEventListener('focus', onOrientChange);
+window.addEventListener('orientationchange', onOrientChange);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
+if (window.screen && screen.orientation && screen.orientation.addEventListener)
+  screen.orientation.addEventListener('change', onOrientChange);
 onResize();
+
+/* 首次触摸：解除宿主 WebView 可能设置的竖屏锁定，并尝试全屏（失败静默）。
+   不强制横屏，只是把"能不能转"交还给系统。 */
+var _orientTried = false;
+function tryEnableLandscape(){
+  if (_orientTried) return;
+  _orientTried = true;
+  try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch(e){}
+  var touch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  if (touch){
+    try {
+      var el = document.documentElement;
+      if (el.requestFullscreen && !document.fullscreenElement){
+        var pr = el.requestFullscreen({ navigationUI: 'hide' });
+        if (pr && pr.catch) pr.catch(function(){});
+      }
+    } catch(e){}
+  }
+  watchViewport();
+}
+window.addEventListener('pointerdown', tryEnableLandscape, { once: true, passive: true });
+window.addEventListener('touchend', tryEnableLandscape, { once: true, passive: true });
+
+/* 兜底看守：部分国产 WebView 转屏后既不发 resize 也不发 orientationchange，
+   每 400ms 对比一次真实宽高，只要变了就重排。开销可忽略。 */
+setInterval(function(){
+  var s = getViewportSize();
+  if (Math.abs(s.w - _vpApplied.w) > 1 || Math.abs(s.h - _vpApplied.h) > 1) onResize();
+}, 400);
 
 /* ---------------------------------------------------------------- 罗盘 */
 var needleEl = document.getElementById('needle');
@@ -5422,7 +5498,7 @@ function updateCompass(fwd){
 }
 
 /* ---------------------------------------------------------------- 小羊行为 */
-var _shR = new V3(), _shM = new THREE.Matrix4(), _shQ = new QT();
+var _shR = new V3(), _shAxis = new V3(), _shM = new THREE.Matrix4(), _shQ = new QT();
 var _shTmp = new V3(), _shPrevUp = new V3();
 function updateSheep(dt){
   var s = sheep;
@@ -5451,8 +5527,14 @@ function updateSheep(dt){
         s.dir.addScaledVector(s.up, -s.dir.dot(s.up));
         if (s.dir.lengthSq() < 1e-8) s.dir.copy(tgt); else s.dir.normalize();
         var ang = Math.acos(clamp(s.dir.dot(tgt), -1, 1));
-        if (ang > 1e-4) s.dir.lerp(tgt, Math.min(1, (3.0*dt)/ang)).normalize();
-        s.dir.addScaledVector(s.up, -s.dir.dot(s.up)).normalize();
+        if (ang > 1e-4){
+          /* 切平面内按固定角速度转：对跖点不再因 lerp 退化而永远转不过身或 ±180° 跳变 */
+          _shAxis.crossVectors(s.dir, tgt);
+          if (_shAxis.lengthSq() < 1e-8) _shAxis.crossVectors(s.up, s.dir);
+          if (_shAxis.lengthSq() < 1e-8) _shAxis.set(1,0,0).cross(s.up);
+          s.dir.applyAxisAngle(_shAxis.normalize(), Math.min(ang, 3.0*dt));
+          s.dir.addScaledVector(s.up, -s.dir.dot(s.up)).normalize();
+        }
         /* 位置直接按输入推进：想去哪就去哪 */
         s.up = stepDir(s.up, tgt, 7.0*dt);
       }
@@ -5507,15 +5589,29 @@ function updateSheep(dt){
     if (gR >= 0 && s.r <= gR){
       s.r = gR; s.air = false; s.vr = 0;
     } else if (s.r < CORE_R + 0.9){
-      /* 从星球另一头掉出来，不卡在虚空 */
-      s.up.negate();
-      s.r = Math.max(groundRadiusAt(s.up), PLANET_R) + 0.3;
+      /* 从星球另一头掉出来：落到真实地面，朝向按新法线重投影，别让羊横躺在洞里 */
+      s.up.copy(findLandingDir(s.up.clone().negate()));
       s.air = false; s.vr = 0;
+      s.r = Math.max(groundRadiusAt(s.up), PLANET_R - DIG_DEPTH_MAX) + 0.30;
       if (!ride.on) toast('小羊从星球另一头钻了出来。');
     }
   }
 
-  _shR.crossVectors(s.up, s.dir).normalize();
+  /* 清掉 dir 在 up 上的径向分量：up 每帧沿球面前进后 dir 会带一点径向分量，
+     不清理会让 makeBasis 拿到非正交基，四元数不再单位化（姿态轻微扭曲、帧间转角虚高） */
+  s.dir.addScaledVector(s.up, -s.dir.dot(s.up));
+  if (s.dir.lengthSq() < 1e-8) s.dir.set(1,0,0).cross(s.up);
+  if (s.dir.lengthSq() < 1e-8) s.dir.set(0,0,1).cross(s.up);
+  s.dir.normalize();
+  _shR.crossVectors(s.up, s.dir);
+  if (_shR.lengthSq() < 1e-8){
+    /* dir 被地形/碰撞推到与 up 共线时，重建一个切向，避免 makeBasis 拿到零向量 */
+    s.dir.set(1,0,0).cross(s.up);
+    if (s.dir.lengthSq() < 1e-8) s.dir.set(0,0,1).cross(s.up);
+    s.dir.normalize();
+    _shR.crossVectors(s.up, s.dir);
+  }
+  _shR.normalize();
   _shM.makeBasis(_shR, s.up, s.dir);
   _shQ.setFromRotationMatrix(_shM);
   s.group.quaternion.copy(_shQ);
@@ -5591,6 +5687,23 @@ function snapHeadingToUp(){
   headingQ.setFromRotationMatrix(tmpM1);
 }
 
+/* 穿出通洞后找一个真正有地面的落点：避免直接落在另一个洞口/坑壁上 */
+function findLandingDir(u){
+  if (groundRadiusAt(u) >= 0) return u.clone();
+  var t1 = new V3().crossVectors(u, new V3(0,1,0));
+  if (t1.lengthSq() < 1e-8) t1.set(1,0,0).cross(u);
+  t1.normalize();
+  var t2 = new V3().crossVectors(u, t1).normalize();
+  for (var rad = 0.35; rad <= 1.7; rad += 0.25){
+    for (var k = 0; k < 8; k++){
+      var a = k * Math.PI / 4;
+      var d = stepDir(u, t1.clone().multiplyScalar(Math.cos(a)).addScaledVector(t2, Math.sin(a)), rad);
+      if (groundRadiusAt(d) >= 0) return d;
+    }
+  }
+  return u.clone();
+}
+
 /* 站在地表：贴地、能迈上一层台阶；没有支撑就掉下去 */
 function updatePlayerGround(dt){
   var gR = groundRadiusAt(playerUp);
@@ -5618,13 +5731,16 @@ function updatePlayerGround(dt){
     if (gR >= 0 && playerR <= gR){
       playerR = gR;
       falling = false; playerVR = 0;
+      /* 落地姿态兜底：只有明显歪了才掰正，正常行走插值不覆盖 */
+      if (new V3(0,1,0).applyQuaternion(headingQ).dot(playerUp) < 0.98) snapHeadingToUp();
       spawnDust(playerUp.clone().multiplyScalar(playerR), playerUp);
     } else if (playerR < CORE_R + 0.9){
       /* 挖穿掉下去：落到内核前从星球另一头出来，不落进虚空 */
-      playerUp.negate();
+      playerUp.copy(findLandingDir(playerUp.clone().negate()));
       snapHeadingToUp();
-      var T2 = tiles[findTile(playerUp)];
-      playerR = PLANET_R + Math.max(T2.h, 0) + 0.5;
+      /* 直接贴在新地面的实际高度上，避免 0.5 的二次跌落触发 falling */
+      var lg = groundRadiusAt(playerUp);
+      playerR = Math.max(lg, PLANET_R - DIG_DEPTH_MAX) + 0.04;
       playerVR = 0; falling = false;
       state.fell = true;
       var cp = playerUp.clone().multiplyScalar(playerR);
@@ -5654,6 +5770,15 @@ function updatePlanet(dt){
   if (ilen < 0.06){ ix = 0; iy = 0; ilen = 0; }
 
   var fwd = tmpV1.copy(camF).applyAxisAngle(playerUp, camYaw).normalize();
+  /* camF 与当地 up 共线时给稳定切向，避免 right 退化后角色乱转 */
+  if (tmpV2.crossVectors(fwd, playerUp).lengthSq() < 1e-8){
+    fwd.copy(heading).addScaledVector(playerUp, -heading.dot(playerUp));
+    if (fwd.lengthSq() < 1e-8){
+      fwd.set(0,0,1).cross(playerUp);
+      if (fwd.lengthSq() < 1e-8) fwd.set(1,0,0).cross(playerUp);
+    }
+    fwd.normalize();
+  }
   _camFwdNow.copy(fwd);
   var right = tmpV2.crossVectors(fwd, playerUp).normalize();
 
@@ -5692,20 +5817,40 @@ function updatePlanet(dt){
     updatePlayerGround(dt);
   }
 
-  /* 镜头基准平行运输，永不翻转 */
-  if (prevUp.distanceToSquared(playerUp) > 1e-12){
-    tmpQ1.setFromUnitVectors(prevUp, playerUp);
-    camF.applyQuaternion(tmpQ1).normalize();
-    camF.addScaledVector(playerUp, -camF.dot(playerUp)).normalize();
-  }
-
-  /* 小羊 / 骑乘 */
+  /* 小羊 / 骑乘：先同步玩家，再做镜头基准运输；否则骑乘时 prevUp===playerUp，camF 会永久冻结 */
   updateSheep(dt);
   if (ride.on){
     playerUp.copy(sheep.up);
     playerR = sheep.r + 0.30;
     falling = sheep.air;
     headingQ.copy(sheep.group.quaternion);
+    heading.copy(sheep.dir);
+  }
+
+  /* 镜头基准平行运输，永不翻转。
+     prevUp 与 playerUp 接近对跖（挖穿瞬移）时 setFromUnitVectors 轴不唯一，
+     会把 camF 甩到随机方向 -> 镜头连续翻 180°，所以直接跳过，改用 heading 重建。 */
+  var jump = prevUp.dot(playerUp) < -0.7;
+  if (jump){
+    camF.copy(heading).addScaledVector(playerUp, -heading.dot(playerUp));
+    if (camF.lengthSq() < 1e-6){
+      camF.set(0,0,1).cross(playerUp);
+      if (camF.lengthSq() < 1e-8) camF.set(1,0,0).cross(playerUp);
+    }
+    camF.normalize();
+  } else if (prevUp.distanceToSquared(playerUp) > 1e-12){
+    tmpQ1.setFromUnitVectors(prevUp, playerUp);
+    camF.applyQuaternion(tmpQ1);
+    camF.addScaledVector(playerUp, -camF.dot(playerUp));
+    if (camF.lengthSq() < 0.04){
+      camF.copy(heading);
+      camF.addScaledVector(playerUp, -camF.dot(playerUp));
+    }
+    if (camF.lengthSq() < 1e-8){
+      camF.set(0,0,1).cross(playerUp);
+      if (camF.lengthSq() < 1e-8) camF.set(1,0,0).cross(playerUp);
+    }
+    camF.normalize();
   }
 
   playerPos.copy(playerUp).multiplyScalar(playerR);
@@ -6019,7 +6164,7 @@ if (/[?&]dbg=1/.test(location.search)){
         u = stepDir(u, f, d);
       }
       playerUp.copy(u);
-      playerR = Math.max(groundRadiusAt(u), PLANET_R - DIG_DEPTH);
+      playerR = Math.max(groundRadiusAt(u), PLANET_R - DIG_DEPTH_MAX);
       falling = false; playerVR = 0;
       var cf = new V3().crossVectors(u, new V3(0,1,0)).normalize();
       camF.copy(cf).negate();
@@ -6085,7 +6230,7 @@ if (/[?&]dbg=1/.test(location.search)){
     setUp: function(x,y,z){
       var u = new V3(x,y,z).normalize();
       playerUp.copy(u);
-      playerR = Math.max(groundRadiusAt(u), PLANET_R - DIG_DEPTH);
+      playerR = Math.max(groundRadiusAt(u), PLANET_R - DIG_DEPTH_MAX);
       falling = false; playerVR = 0;
     },
     aim: function(x,y,z){
@@ -6101,6 +6246,67 @@ if (/[?&]dbg=1/.test(location.search)){
     },
     cam: function(){ return { f: camF.toArray().map(function(v){ return +v.toFixed(3); }), yaw: +camYaw.toFixed(2) }; },
     camPos: function(){ return camera.position.toArray().map(function(v){ return +v.toFixed(3); }); },
+    viewport: function(){
+      var vv = window.visualViewport || {};
+      var cv = renderer.domElement;
+      return { w: getViewportSize().w, h: getViewportSize().h,
+               inner: [window.innerWidth, window.innerHeight],
+               visual: [Math.round(vv.width || 0), Math.round(vv.height || 0)],
+               canvas: [cv.width, cv.height], css: [cv.clientWidth, cv.clientHeight],
+               aspect: +camera.aspect.toFixed(4), dpr: +renderer.getPixelRatio().toFixed(2),
+               landscape: !!(window.matchMedia && matchMedia('(orientation:landscape)').matches),
+               orientation: (screen.orientation && screen.orientation.type) || '' };
+    },
+    /* 渲染开销快照：三角形 / drawcall / 几何体数 */
+    perf: function(){
+      return { tri: renderer.info.render.triangles, calls: renderer.info.render.calls,
+               geo: renderer.info.memory.geometries, tex: renderer.info.memory.textures,
+               prog: renderer.info.programs ? renderer.info.programs.length : -1 };
+    },
+    /* 镜头稳定度：camF 的径向分量 + 相机帧间转角（每帧调一次） */
+    camUp: (function(){
+      var pq = null;
+      return function(){
+        var dc = 0;
+        if (pq){
+          var a = pq.clone().normalize(), b = camera.quaternion.clone().normalize();
+          dc = 2*Math.acos(Math.min(1, Math.abs(a.dot(b)))) * 180/Math.PI;
+        } else pq = camera.quaternion.clone();
+        pq.copy(camera.quaternion);
+        return { camUp: +camF.dot(playerUp).toFixed(3), dc: +dc.toFixed(2) };
+      };
+    })(),
+    /* 骑乘取证：逐帧记录相机 / 羊朝向的帧间转角与 camF 径向分量 */
+    rideTrace: function(frames, codes){
+      var codesAll = ['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'];
+      codesAll.forEach(function(c){ keys[c] = false; });
+      (codes || ['KeyW']).forEach(function(c){ keys[c] = true; });
+      var out = [], pq = sheep.group.quaternion.clone(), pc = camera.quaternion.clone();
+      var ref = new V3().crossVectors(playerUp, new V3(0,1,0)).normalize();
+      var _tm = new THREE.Matrix4(), _tq = new QT(), _tqA = new QT(), _tqB = new QT();
+      for (var i=0;i<frames;i++){
+        updatePlanet(1/60);
+        var dq = 2*Math.acos(Math.min(1, Math.abs(_tqA.copy(pq).normalize().dot(_tqB.copy(sheep.group.quaternion).normalize())))) * 180/Math.PI;
+        var dc = 2*Math.acos(Math.min(1, Math.abs(_tqA.copy(pc).normalize().dot(_tqB.copy(camera.quaternion).normalize())))) * 180/Math.PI;
+        var rgt = new V3().crossVectors(playerUp, ref);
+        var yaw = Math.atan2(sheep.dir.dot(rgt), sheep.dir.dot(ref)) * 180/Math.PI;
+        /* 组四元数与 up/dir 基是否一致：不一致说明四元数本身在累积漂移 */
+        var bx = new V3().crossVectors(sheep.up, sheep.dir).normalize();
+        _tm.makeBasis(bx, sheep.up, sheep.dir);
+        _tq.setFromRotationMatrix(_tm);
+        var qErr = 2*Math.acos(Math.min(1, Math.abs(_tqA.copy(_tq).normalize().dot(_tqB.copy(sheep.group.quaternion).normalize())))) * 180/Math.PI;
+        out.push({ i: i, camUp: +camF.dot(playerUp).toFixed(3), dq: +dq.toFixed(2),
+                   dc: +dc.toFixed(2), yaw: +yaw.toFixed(1),
+                   r: +playerR.toFixed(2), ride: ride.on,
+                   sd: sheep.dir.toArray().map(function(v){ return +v.toFixed(3); }),
+                   su: sheep.up.toArray().map(function(v){ return +v.toFixed(3); }),
+                   pos: sheep.group.position.toArray().map(function(v){ return +v.toFixed(2); }),
+                   qErr: +qErr.toFixed(2), qLen: +sheep.group.quaternion.length().toFixed(4) });
+        pq.copy(sheep.group.quaternion); pc.copy(camera.quaternion);
+      }
+      codesAll.forEach(function(c){ keys[c] = false; });
+      return out;
+    },
     view: function(pitch, yaw, dist){ if (pitch != null) camPitch = clamp(pitch, 0.08, 1.22); if (yaw != null) camYaw = yaw; if (dist) camDist = dist; },
     freeCam: function(a, b){
       /* 取证用：把镜头固定在指定位置看向指定点 */
@@ -6317,7 +6523,7 @@ if (/[?&]dbg=1/.test(location.search)){
       for (var i=0;i<n;i++){
         if (T.removed) break;
         T.h = +(T.h - DIG_STEP).toFixed(3);
-        if (T.h <= -DIG_DEPTH + 1e-4){ T.h = -DIG_DEPTH; T.removed = true; }
+        if (T.h <= -DIG_DEPTH_MAX + 1e-4){ T.h = -DIG_DEPTH_MAX; T.removed = true; }
       }
       markTerrain(); persist();
       return { h: T.h, removed: T.removed };
@@ -6329,7 +6535,7 @@ if (/[?&]dbg=1/.test(location.search)){
         u = stepDir(u, f, d);
       }
       sheep.up.copy(u);
-      sheep.r = Math.max(groundRadiusAt(u), PLANET_R - DIG_DEPTH);
+      sheep.r = Math.max(groundRadiusAt(u), PLANET_R - DIG_DEPTH_MAX);
       sheep.air = false; sheep.vr = 0;
       sheep.dir.copy(new V3().crossVectors(u, new V3(0,1,0)).normalize());
       if (ride.on){ playerUp.copy(sheep.up); playerR = sheep.r + 0.30; }
