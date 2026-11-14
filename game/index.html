@@ -3630,8 +3630,11 @@ function placeTargetDir(){
 }
 
 function updateGhost(){
+  ghost.userData.why = '';
   if (ride.on || falling || sunset.active || state.inv[state.sel] <= 0){
     ghost.visible = false;
+    ghost.userData.ok = false;
+    ghost.userData.why = 'idle';
     return;
   }
   var tgt = placeTargetDir();
@@ -3652,16 +3655,24 @@ function updateGhost(){
     rG = (T.removed ? PLANET_R - DIG_DEPTH : PLANET_R + T.h + DIG_STEP) + 0.02;
   }
   var A = tileVerts[T.v[0]], B = tileVerts[T.v[1]], C = tileVerts[T.v[2]];
+  ghost.userData.ok = ok;
+  /* 放不下就别画：以前放不下也会画一片红的，挖完一抬头整块半透明三角糊在地表上 */
+  if (!ok){ ghost.visible = false; ghost.userData.why = 'noplace'; return; }
   /* 站在坑里时，这块瓦片预览会悬在头顶、糊在镜头上，像一片半透明三角墙戳向天空 */
-  if (rG - playerR > 0.8){ ghost.visible = false; return; }
+  if (rG - playerR > 0.8){ ghost.visible = false; ghost.userData.why = 'deep'; return; }
   _ghostMid.set((A.x+B.x+C.x)*rG/3, (A.y+B.y+C.y)*rG/3, (A.z+B.z+C.z)*rG/3);
-  if (camera.position.distanceTo(_ghostMid) < 1.9){ ghost.visible = false; return; }
-  _ghostPos.setXYZ(0, A.x*rG, A.y*rG, A.z*rG);
-  _ghostPos.setXYZ(1, B.x*rG, B.y*rG, B.z*rG);
-  _ghostPos.setXYZ(2, C.x*rG, C.y*rG, C.z*rG);
+  if (camera.position.distanceTo(_ghostMid) < 2.4){ ghost.visible = false; ghost.userData.why = 'near'; return; }
+  /* 一格瓦片边长 4 个单位，整块铺出来等于糊住半屏；缩到一半当“落点标记” */
+  var K = 0.5;
+  var ax = A.x*rG, ay = A.y*rG, az = A.z*rG;
+  var bx = B.x*rG, by = B.y*rG, bz = B.z*rG;
+  var cx = C.x*rG, cy = C.y*rG, cz = C.z*rG;
+  _ghostPos.setXYZ(0, _ghostMid.x + (ax-_ghostMid.x)*K, _ghostMid.y + (ay-_ghostMid.y)*K, _ghostMid.z + (az-_ghostMid.z)*K);
+  _ghostPos.setXYZ(1, _ghostMid.x + (bx-_ghostMid.x)*K, _ghostMid.y + (by-_ghostMid.y)*K, _ghostMid.z + (bz-_ghostMid.z)*K);
+  _ghostPos.setXYZ(2, _ghostMid.x + (cx-_ghostMid.x)*K, _ghostMid.y + (cy-_ghostMid.y)*K, _ghostMid.z + (cz-_ghostMid.z)*K);
   _ghostPos.needsUpdate = true;
-  ghost.material.color.set(ok ? '#a8e089' : '#e08a86');
-  ghost.material.opacity = ok ? .42 : .2;
+  ghost.material.color.set('#a8e089');
+  ghost.material.opacity = .4;
   ghost.visible = true;
 }
 
@@ -6220,6 +6231,54 @@ if (/[?&]dbg=1/.test(location.search)){
                fwd: fwd.toArray().map(function(v){ return +v.toFixed(3); }),
                r: +playerR.toFixed(2), falling: falling,
                playerUp: playerUp.toArray().map(function(v){ return +v.toFixed(3); }) };
+    },
+    /* 取证：盖土预览片（那块半透明三角）当前状态 */
+    ghost: function(){
+      var a = ghost.geometry.attributes.position;
+      var A = new V3().fromBufferAttribute(a, 0),
+          B = new V3().fromBufferAttribute(a, 1),
+          C = new V3().fromBufferAttribute(a, 2);
+      var mid = new V3().addVectors(A, B).add(C).multiplyScalar(1/3);
+      /* 屏幕占比：预览片到底糊住多少画面、会不会遮住角色（中心点） */
+      var W = innerWidth, H = innerHeight;
+      function px(v){
+        var q = v.clone().project(camera);
+        return [ (q.x*0.5+0.5)*W, (1-(q.y*0.5+0.5))*H ];
+      }
+      function metric(V){
+        var p0 = px(V[0]), p1 = px(V[1]), p2 = px(V[2]);
+        var tri = Math.abs((p1[0]-p0[0])*(p2[1]-p0[1]) - (p2[0]-p0[0])*(p1[1]-p0[1])) / 2;
+        var s = function(a,b,c){ return (a[0]-c[0])*(b[1]-c[1]) - (b[0]-c[0])*(a[1]-c[1]); };
+        var d1 = s([W/2,H/2],p0,p1), d2 = s([W/2,H/2],p1,p2), d3 = s([W/2,H/2],p2,p0);
+        return { cover: +(100*tri/(W*H)).toFixed(2),
+                 center: !((d1<0||d2<0||d3<0) && (d1>0||d2>0||d3>0)),
+                 px: p0.concat(p1, p2).map(function(v){ return Math.round(v); }) };
+      }
+      var now = metric([A, B, C]);
+      /* 同一视角还原修复前的整格尺寸（1/0.5 倍），纯测量不改状态，用来量化"以前糊了多少屏" */
+      function grow(v){ return mid.clone().addScaledVector(v.clone().sub(mid), 1/0.5); }
+      var was = metric([grow(A), grow(B), grow(C)]);
+      return { on: ghost.visible, ok: !!ghost.userData.ok, why: ghost.userData.why || '',
+               op: ghost.material.opacity, dw: ghost.material.depthWrite,
+               side: ghost.material.side, col: ghost.material.color.getHexString(),
+               edge: [+A.distanceTo(B).toFixed(2), +B.distanceTo(C).toFixed(2), +C.distanceTo(A).toFixed(2)],
+               camD: +camera.position.distanceTo(mid).toFixed(2),
+               cover: now.cover, center: now.center, px: now.px,
+               coverOld: was.cover, centerOld: was.center,
+               inv: state.inv.slice(), sel: state.sel,
+               planet: { base: [baseMesh.material.transparent, baseMesh.material.depthWrite],
+                         over: [overMesh.material.transparent, overMesh.material.depthWrite],
+                         core: [coreMesh.material.transparent, coreMesh.material.depthWrite] } };
+    },
+    /* 取证：场景里所有可见的透明网格（排查"地表能看穿"到底是谁） */
+    mats: function(){
+      var out = [];
+      scene.traverse(function(o){
+        if (!o.isMesh || !o.visible || !o.material || !o.material.transparent) return;
+        out.push((o.name || o.type) + '|' + (o.material.color ? o.material.color.getHexString() : '-')
+                 + '|op' + o.material.opacity + '|dw' + o.material.depthWrite);
+      });
+      return out;
     },
     /* 地形取证：坑、改过的瓦片、树苗、花 */
     world: function(){
