@@ -670,7 +670,7 @@ var hash = function(x,y,z){
 };
 
 /* ---------------------------------------------------------------- 世界常量 */
-var PLANET_R = 16;
+var PLANET_R = 20;
 var HOME_DIR   = dirFromLatLon(16, -30);    // 灯塔与井
 var SPAWN_DIR  = dirFromLatLon(32, -2);
 var ROSE_DIR   = dirFromLatLon(46, -23);
@@ -786,11 +786,11 @@ scene.add(playerLight);
 
 /* ---------------------------------------------------------------- 小行星 */
 /* ---------------------------------------------------------------- 地形：球面瓦片高度场 */
-var TILE_DETAIL = 4;
+var TILE_DETAIL = 20;
 var DIG_STEP  = 0.30;   // 每挖一层下沉
 var DIG_DEPTH = 2.10;   // 旧版挖穿深度：只留给旧存档分档用
-var CORE_R    = 10.6;   // 实心内核半径（挖穿后看见的是这层土）
-var DIG_DEPTH_MAX = PLANET_R - CORE_R - 0.30;   // 5.10：挖到内核的物理边界（17 铲），不再卡在 7 铲
+var CORE_R    = PLANET_R - 5.40;      // 实心内核半径：始终留 5.10 的挖掘厚度 + 0.30 缓冲
+var DIG_DEPTH_MAX = PLANET_R - CORE_R - 0.30;   // 5.10：挖到内核的物理边界（17 铲），星球变大后深度不变
 var CR_R      = 0.72;   // 坑口半径：挖出来的是圆口，不是一个三角面
 var CR_PUNCH  = 0.50;   // 归一化半径小于这里 = 已经挖穿的通洞
 var craters   = [];     // 圆坑：{ c: 球面方向, d: 深度, p: 是否挖穿 }
@@ -6835,6 +6835,9 @@ if (/[?&]dbg=1/.test(location.search)){
     pos: function(){ return playerPos.toArray(); },
     up: function(){ return playerUp.toArray(); },
     r: function(){ return playerR; },
+    R: function(){ return PLANET_R; },
+    tileDetail: function(){ return TILE_DETAIL; },
+    triCount: function(){ return tiles.length; },
     tile: function(){
       var T = tiles[findTile(playerUp)];
       var cr = null;
