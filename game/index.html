@@ -6166,6 +6166,7 @@ if (/[?&]dbg=1/.test(location.search)){
       playerUp.copy(u);
       playerR = Math.max(groundRadiusAt(u), PLANET_R - DIG_DEPTH_MAX);
       falling = false; playerVR = 0;
+      snapHeadingToUp();
       var cf = new V3().crossVectors(u, new V3(0,1,0)).normalize();
       camF.copy(cf).negate();
       camera.position.copy(playerUp).multiplyScalar(playerR + 2.2).addScaledVector(cf, -3.6);
@@ -6232,6 +6233,7 @@ if (/[?&]dbg=1/.test(location.search)){
       playerUp.copy(u);
       playerR = Math.max(groundRadiusAt(u), PLANET_R - DIG_DEPTH_MAX);
       falling = false; playerVR = 0;
+      snapHeadingToUp();
     },
     aim: function(x,y,z){
       var A = new V3(x,y,z);
