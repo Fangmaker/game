@@ -3,8 +3,8 @@
 ## 0. 公网联机（不同 WiFi、手机流量也能进同一个房间）
 
 **公网地址：每次启动脚本会打印一个 `https://xxxx.trycloudflare.com`。**
-本次实测用的地址是 `https://tion-enforcement-worcester-wayne.trycloudflare.com`
-——它只在本次隧道还活着时有效，隧道一停就作废，别收藏。
+当前实测可用的地址是 `https://demanding-bookstore-southeast-collaborative.trycloudflare.com`
+——它只在这次隧道还活着时有效，隧道一停就作废，别收藏。
 
 **电脑关了就断：**房间服务和隧道都跑在这台电脑上，电脑关机 / 睡眠 / 关掉脚本，
 联机立刻断开（单机存档不受影响）。
