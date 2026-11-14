@@ -4209,8 +4209,15 @@ function netFull(){ NET.full = true; }
 function netDig(){ NET.digSeq++; }
 
 function defaultServer(){
-  var host = (location.protocol !== 'file:' && location.hostname) ? location.hostname : 'localhost';
-  return (location.protocol === 'https:' ? 'wss://' : 'ws://') + host + ':18201/ws';
+  var h = location.hostname;
+  if (location.protocol === 'file:' || !h) return 'ws://localhost:18201/ws';
+  /* GitHub Pages 只有静态文件、没有后端，必须手填隧道地址 */
+  if (/(^|\.)github\.io$/i.test(h)) return '';
+  /* 纯静态端口（旧用法）与房间服务分开，WS 仍在 18201 */
+  if (location.port === '18100') return 'ws://' + h + ':18201/ws';
+  /* 网关同源：页面和 WS 一个端口，https 页面自动是 wss */
+  return (location.protocol === 'https:' ? 'wss://' : 'ws://') + h +
+         (location.port ? ':' + location.port : '') + '/ws';
 }
 function normalizeServer(v){
   v = (v || '').trim();
@@ -4218,7 +4225,8 @@ function normalizeServer(v){
   if (!/^wss?:\/\//i.test(v)) v = (location.protocol === 'https:' ? 'wss://' : 'ws://') + v;
   try {
     var u = new URL(v);
-    if (!u.port) u.port = '18201';
+    /* 只在明文 ws 且没写端口时补 18201；wss 走 443，隧道地址不能加端口 */
+    if (!u.port && u.protocol === 'ws:') u.port = '18201';
     if (!u.pathname || u.pathname === '/') u.pathname = '/ws';
     return u.toString().replace(/\/$/, '');
   } catch(e){ return v; }
@@ -4231,8 +4239,8 @@ function netLiveCount(){
 /* 连不上时说人话：https 混用 ws://、GitHub Pages、普通超时分别提示 */
 function netFailHint(){
   if (NET.mixed) return '页面是 https，浏览器会拦掉 ws://，请填 wss:// 或改用本机 http 打开';
-  if (/(^|\.)github\.io$/i.test(location.hostname)) return 'GitHub Pages 只有静态页，连不上 18201 端口；先在电脑上跑 net/roomserver.py，再填它的地址';
-  return '5 秒没连上，检查 net/roomserver.py 是否在跑、地址和 18201 端口是否通';
+  if (/(^|\.)github\.io$/i.test(location.hostname)) return 'GitHub Pages 只有静态页，连不上后端；先启动隧道，把公网地址填到上面（见 net/README.md）';
+  return '5 秒没连上：检查隧道和 net/roomserver.py 是否在跑、地址是否还有效';
 }
 function netUi(){
   if (!netStatusEl) return;
@@ -4495,6 +4503,12 @@ function netConnect(){
   NET.room = room;
   NET.mixed = (location.protocol === 'https:' && /^ws:\/\//i.test((netServerEl.value || '').trim()));
   NET.server = normalizeServer(netServerEl.value);
+  if (!NET.server){
+    NET.on = false;
+    NET.failReason = '还没有公网地址：先启动隧道，把地址填进上面（见 net/README.md）';
+    netUi();
+    return;
+  }
   netServerEl.value = NET.server;
   try { localStorage.setItem('b612.net.v1', JSON.stringify({ room: room, server: NET.server })); } catch(e){}
   NET.on = true; NET.retry = 0; NET.failReason = ''; NET.everConnected = false; NET.failShown = '';
