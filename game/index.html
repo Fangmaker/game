@@ -48,6 +48,29 @@
   .chip svg{width:13px;height:13px;display:block;opacity:.9}
   .chip b{font-weight:400;font-variant-numeric:tabular-nums;min-width:8px;text-align:center}
 
+  /* ---------- 生存状态条（血/渴/体力） ---------- */
+  #vitals{
+    position:fixed;left:50%;transform:translateX(-50%);
+    top:calc(env(safe-area-inset-top,0px) + 12px);
+    width:150px;display:flex;flex-direction:column;gap:4px;z-index:6;pointer-events:none;
+  }
+  .vit{display:flex;align-items:center;gap:6px;font-size:9px;letter-spacing:.7px;
+    color:rgba(244,234,217,.55);text-shadow:0 1px 5px rgba(0,0,0,.9)}
+  .vit i{font-style:normal;width:9px;text-align:center;opacity:.8;font-size:10px}
+  .vit .bar{flex:1;height:4px;border-radius:99px;background:rgba(8,12,22,.55);
+    box-shadow:inset 0 0 0 1px rgba(244,234,217,.12);overflow:hidden}
+  .vit .bar span{display:block;height:100%;width:100%;border-radius:99px;
+    transition:width .16s linear,background .3s}
+  #vHp .bar span{background:linear-gradient(90deg,#b8493f,#e8856f)}
+  #vTh .bar span{background:linear-gradient(90deg,#2f6f96,#7fc3e8)}
+  #vSt .bar span{background:linear-gradient(90deg,#6c7d3e,#c2d885)}
+  #vitals.dry #vTh .bar span{background:linear-gradient(90deg,#a8482f,#e07a4a);animation:drypulse 1.1s infinite}
+  #vitals.hurt{animation:hurtflash .32s}
+  /* 口渴条本身可点：点一下喝一口水壶 */
+  #vTh{pointer-events:auto;cursor:pointer;margin:-4px -6px;padding:4px 6px}
+  @keyframes drypulse{0%,100%{opacity:1}50%{opacity:.45}}
+  @keyframes hurtflash{0%{filter:brightness(2.2) saturate(1.6)}100%{filter:none}}
+
   /* ---------- 罗盘 ---------- */
   #compass{
     position:fixed;left:calc(env(safe-area-inset-left,0px) + 12px);top:calc(env(safe-area-inset-top,0px) + 12px);
@@ -412,6 +435,12 @@
     </svg>
     <b id="treeN">0</b>
   </div>
+</div>
+
+<div id="vitals">
+  <div class="vit" id="vHp" title="生命"><i>♥</i><div class="bar"><span></span></div></div>
+  <div class="vit" id="vTh" title="口渴"><i>◈</i><div class="bar"><span></span></div></div>
+  <div class="vit" id="vSt" title="体力"><i>⚡</i><div class="bar"><span></span></div></div>
 </div>
 
 <div id="toast"></div>
@@ -3239,16 +3268,28 @@ var state = {
   mods: [],
   char: 'prince',
   outfits: {},
-  skillCd: {}
+  skillCd: {},
+  hp: 100,
+  thirst: 100,
+  stam: 100
 };
 var WATER_MAX = 6;
+/* 生存数值（第一批）：口渴线性掉落，落到 0 开始掉血；体力给挖土和后续战斗用 */
+var VIT_HP_MAX = 100, VIT_TH_MAX = 100, VIT_ST_MAX = 100;
+var VIT_TH_RATE  = 0.45;   /* 口渴：每秒 -0.45（100 → 0 约 222 s） */
+var VIT_DRY_HP   = 2.0;    /* 口渴为 0 时每秒掉血 */
+var VIT_HP_REGEN = 0.6;    /* 口渴 > 30 时每秒回血 */
+var VIT_TH_DRINK = 45;     /* 喝一口水壶：口渴 +45 */
+var VIT_ST_REGEN      = 12; /* 体力：站定每秒回 12 */
+var VIT_ST_REGEN_MOVE = 4;  /* 体力：走动时每秒回 4 */
+var VIT_DIG_COST = 6;      /* 每铲消耗体力（满体力 16 铲） */
 var hadSave = false;
 
 try {
   var raw = localStorage.getItem(SAVE_KEY);
   if (raw){
     var sv = JSON.parse(raw);
-    if (sv && (sv.v === 2 || sv.v === 3 || sv.v === 4 || sv.v === 5)){
+    if (sv && (sv.v >= 2 && sv.v <= 6)){
       hadSave = true;
       state.day = sv.day || 1;
       state.sunsets = sv.sunsets || 0;
@@ -3270,6 +3311,9 @@ try {
       if (typeof sv.char === 'string' && rigs[sv.char]) state.char = sv.char;
       if (sv.outfits && typeof sv.outfits === 'object') state.outfits = sv.outfits;
       if (sv.skillCd && typeof sv.skillCd === 'object') state.skillCd = sv.skillCd;
+      state.hp = sv.hp === undefined ? 100 : clamp(+sv.hp || 0, 1, VIT_HP_MAX);
+      state.thirst = sv.thirst === undefined ? VIT_TH_MAX : clamp(+sv.thirst || 0, 0, VIT_TH_MAX);
+      state.stam = sv.stam === undefined ? VIT_ST_MAX : clamp(+sv.stam || 0, 0, VIT_ST_MAX);
       /* 恢复挖填过的地形 */
       if (Array.isArray(sv.mods)){
         sv.mods.forEach(function(m){
@@ -3302,8 +3346,9 @@ function persist(){
       if (T.h !== 0 || T.removed) mods.push([i, +T.h.toFixed(3), T.removed ? 1 : 0]);
     }
     localStorage.setItem(SAVE_KEY, JSON.stringify({
-      v: 5,
+      v: 6,
       day: state.day, sunsets: state.sunsets,
+      hp: +state.hp.toFixed(1), thirst: +state.thirst.toFixed(1), stam: +state.stam.toFixed(1),
       roseStage: state.roseStage, garden: state.garden,
       water: state.water, dust: state.dust,
       treesPulled: state.treesPulled,
@@ -3406,6 +3451,98 @@ function refreshChips(){
   document.getElementById('waterN').textContent = state.water;
   document.getElementById('treeN').textContent = treeCount;
 }
+
+/* ---------------------------------------------------------------- 生存数值 */
+var vitEl = document.getElementById('vitals');
+var vitHp = document.querySelector('#vHp .bar span');
+var vitTh = document.querySelector('#vTh .bar span');
+var vitSt = document.querySelector('#vSt .bar span');
+var _vitShown = { hp: -1, th: -1, st: -1 };
+function refreshVitals(){
+  var hp = Math.round(state.hp / VIT_HP_MAX * 100);
+  var th = Math.round(state.thirst / VIT_TH_MAX * 100);
+  var st = Math.round(state.stam / VIT_ST_MAX * 100);
+  if (hp !== _vitShown.hp){ vitHp.style.width = hp + '%'; _vitShown.hp = hp; }
+  if (th !== _vitShown.th){ vitTh.style.width = th + '%'; _vitShown.th = th; }
+  if (st !== _vitShown.st){ vitSt.style.width = st + '%'; _vitShown.st = st; }
+  if (vitEl) vitEl.classList.toggle('dry', state.thirst <= 0.5);
+}
+/* 触屏没有 R 键：口渴条点一下 = 喝一口水壶 */
+(function(){
+  var th = document.getElementById('vTh');
+  if (!th) return;
+  th.addEventListener('pointerdown', function(e){
+    e.preventDefault(); e.stopPropagation();
+    drinkFlask();
+  });
+})();
+var _vitSaveT = 0;
+function tickVitals(dt, moving){
+  var th = state.thirst, hp = state.hp;
+  state.thirst = Math.max(0, th - VIT_TH_RATE * dt);
+  if (state.thirst <= 0){
+    hurtPlayer(VIT_DRY_HP * dt, 'thirst');
+  } else if (state.thirst > 30){
+    state.hp = Math.min(VIT_HP_MAX, state.hp + VIT_HP_REGEN * dt);
+  }
+  state.stam = Math.min(VIT_ST_MAX, state.stam + (moving ? VIT_ST_REGEN_MOVE : VIT_ST_REGEN) * dt);
+  refreshVitals();
+  _vitSaveT += dt;
+  if (_vitSaveT > 5){ _vitSaveT = 0; persist(); }
+}
+/* 统一的掉血入口：第一批给口渴用，第二批战斗也走这里 */
+function hurtPlayer(amount, cause){
+  if (state.hp <= 0) return;
+  state.hp = Math.max(0, state.hp - amount);
+  /* 持续伤害（口渴）不给每帧闪屏，只有成规模的伤害（战斗）才闪 */
+  if (vitEl && amount >= 4){
+    vitEl.classList.remove('hurt');
+    void vitEl.offsetWidth;
+    vitEl.classList.add('hurt');
+  }
+  if (state.hp <= 0) onPlayerDown(cause);
+}
+function healPlayer(amount){
+  state.hp = Math.min(VIT_HP_MAX, state.hp + amount);
+  refreshVitals();
+}
+function drinkFull(){
+  var was = state.thirst;
+  state.thirst = VIT_TH_MAX;
+  refreshVitals();
+  return was < VIT_TH_MAX - 0.5;
+}
+/* 喝水壶：消耗 1 点水，口渴 +45 */
+function drinkFlask(){
+  if (state.thirst >= VIT_TH_MAX - 0.5){ toast('现在不渴。'); return false; }
+  if (state.water <= 0){ toast('水壶空了，去井边打点水。'); return false; }
+  state.water--;
+  state.thirst = Math.min(VIT_TH_MAX, state.thirst + VIT_TH_DRINK);
+  refreshVitals();
+  refreshChips();
+  persist();
+  toast('喝了一口，口渴缓过来了。');
+  return true;
+}
+/* 死亡：先只处理口渴/后续战斗共用。第二批接怪物伤害。 */
+function onPlayerDown(){
+  state.hp = VIT_HP_MAX;
+  state.thirst = VIT_TH_MAX * 0.6;
+  state.stam = VIT_ST_MAX;
+  if (ride.on){ ride.on = false; rideMoving = false; ghost.visible = false; }
+  playerUp.copy(HOME_DIR);
+  playerR = Math.max(groundRadiusAt(HOME_DIR), PLANET_R);
+  playerVR = 0; falling = false;
+  snapHeadingToUp();
+  heading.copy(tmpV1.set(0,0,1).applyQuaternion(headingQ)).normalize();
+  camF.copy(heading).addScaledVector(playerUp, -heading.dot(playerUp));
+  if (camF.lengthSq() < 1e-6) camF.set(0,0,1).cross(playerUp).normalize();
+  camPitch = 0.2;
+  refreshVitals();
+  toast('你倒下了……在井边醒来。');
+  persist();
+}
+refreshVitals();
 applyRoseStage(state.roseStage, true);
 applyGarden(state.garden, true);
 shards.forEach(function(s, i){
@@ -3693,6 +3830,10 @@ function updateGhost(){
 function digAt(){
   if (ride.on){ toast('骑着羊挖不了，先下来。'); return; }
   if (sunset.active) return;
+  /* 体力：一铲 6 点，满体力能连挖 16 铲；不够就歇一下（站定回 12/s，走动回 4/s） */
+  if (state.stam < VIT_DIG_COST - 1e-6){ toast('手软了，站一会儿回口气再挖。'); return; }
+  state.stam = Math.max(0, state.stam - VIT_DIG_COST);
+  refreshVitals();
   /* 找脚下最近的圆坑：同一个位置继续挖就往下加深，坑口不会越挖越散 */
   var cr = null;
   for (var i=0;i<craters.length;i++){
@@ -3880,14 +4021,17 @@ function doAction(){
     mount();
   }
   else if (nearTarget.type === 'well' || nearTarget.type === 'pond'){
-    if (state.water >= WATER_MAX){
-      toast('水壶是满的。');
+    var upW = nearTarget.pos.clone().normalize();
+    var wantDrink = state.thirst < VIT_TH_MAX - 0.5;
+    var wantFill = state.water < WATER_MAX;
+    if (!wantDrink && !wantFill){
+      toast('不渴，水壶也是满的。');
       return;
     }
-    state.water = WATER_MAX;
-    var upW = nearTarget.pos.clone().normalize();
+    if (wantFill) state.water = WATER_MAX;
+    if (wantDrink) drinkFull();
     spawnDroplets(nearTarget.pos.clone().addScaledVector(upW, 0.4), upW);
-    toast('水壶灌满了。');
+    toast(wantDrink && wantFill ? '喝饱了，水壶也灌满了。' : (wantDrink ? '喝饱了。' : '水壶灌满了。'));
     refreshChips();
     persist();
   }
@@ -4062,6 +4206,7 @@ window.addEventListener('keydown', function(e){
   if (e.code === 'KeyF' || k === 'f') digAt();
   if (e.code === 'KeyG' || k === 'g') placeAt();
   if (e.code === 'KeyQ' || k === 'q') useSkill();
+  if (e.code === 'KeyR' || k === 'r') drinkFlask();
   if (e.code === 'Digit1' || e.key === '1') setSel(0);
   if (e.code === 'Digit2' || e.key === '2') setSel(1);
 });
@@ -4222,7 +4367,7 @@ var NET = {
   full: false, digSeq: 0, joinedOnce: false, uiCount: -1,
   openTimer: null, failReason: '', mixed: false, everConnected: false, failShown: '',
   lastU: new V3(), lastF: new V3(), lastR: -1, lastMv: -1,
-  lastCh: '', lastOf: '', lastRd: null, lastDg: -1
+  lastCh: '', lastOf: '', lastRd: null, lastDg: -1, lastHp: -1, lastTh: -1
 };
 var _nF = new V3(), _rnV1 = new V3(), _rnV2 = new V3();
 var _rnM = new THREE.Matrix4(), _rnQ = new QT();
@@ -4453,6 +4598,7 @@ function netNewRemote(id, char, outfit){
     id: id, char: '', R: null, up: new V3(0,1,0), tUp: new V3(0,1,0),
     r: PLANET_R, tR: PLANET_R, f: new V3(0,0,1), tF: new V3(0,0,1),
     q: new QT(), _initQ: false, mv: 0, tMv: 0, phase: 0, ride: false, digT: 0,
+    hp: VIT_HP_MAX, th: VIT_TH_MAX,
     fading: false, fade: 1, fadeMats: null, hasState: false, lastDg: -1, outfit: null
   };
   netBuildRemote(rm, char || 'prince', outfit);
@@ -4490,6 +4636,8 @@ function netApplyState(m){
   }
   if (typeof m.mv === 'number') rm.tMv = clamp(m.mv, 0, 1);
   if (m.rd !== undefined) rm.ride = !!m.rd;
+  if (typeof m.hp === 'number') rm.hp = clamp(m.hp, 0, VIT_HP_MAX);
+  if (typeof m.th === 'number') rm.th = clamp(m.th, 0, VIT_TH_MAX);
   if (typeof m.dg === 'number' && m.dg !== rm.lastDg){
     rm.lastDg = m.dg;
     if (rm.hasState){
@@ -4635,7 +4783,9 @@ function netSend(force){
   var outfitCh = NET.lastOf !== ofs;
   var rideCh = NET.lastRd !== ride.on;
   var digCh = NET.lastDg !== NET.digSeq;
-  if (!(force || NET.full || stale || moved || turned || alted || gait || charCh || outfitCh || rideCh || digCh)) return;
+  var hpQ = Math.round(state.hp / 5) * 5, thQ = Math.round(state.thirst / 5) * 5;
+  var vitCh = NET.lastHp !== hpQ || NET.lastTh !== thQ;
+  if (!(force || NET.full || stale || moved || turned || alted || gait || charCh || outfitCh || rideCh || digCh || vitCh)) return;
 
   var msg = { t: 'state' };
   if (force || NET.full || stale || moved || turned || alted){
@@ -4648,11 +4798,13 @@ function netSend(force){
   if (force || NET.full || gait) msg.mv = mvq;
   if (force || NET.full || rideCh) msg.rd = ride.on ? 1 : 0;
   if (digCh) msg.dg = NET.digSeq;
+  if (force || NET.full || stale || vitCh){ msg.hp = hpQ; msg.th = thQ; }
   try { ws.send(JSON.stringify(msg)); NET.lastSend = now; } catch(e){ return; }
   NET.full = false;
   NET.lastU.copy(playerUp); NET.lastF.copy(f); NET.lastR = playerR;
   NET.lastMv = mvq; NET.lastCh = state.char; NET.lastOf = ofs;
   NET.lastRd = ride.on; NET.lastDg = NET.digSeq;
+  NET.lastHp = hpQ; NET.lastTh = thQ;
 }
 
 function netConnect(){
@@ -5827,6 +5979,9 @@ function updatePlanet(dt){
     heading.copy(sheep.dir);
   }
 
+  /* 生存循环：口渴线性下降、干了掉血、体力回复。骑羊时也照走 */
+  tickVitals(dt, moving);
+
   /* 镜头基准平行运输，永不翻转。
      prevUp 与 playerUp 接近对跖（挖穿瞬移）时 setFromUnitVectors 轴不唯一，
      会把 camF 甩到随机方向 -> 镜头连续翻 180°，所以直接跳过，改用 heading 重建。 */
@@ -6227,6 +6382,33 @@ if (/[?&]dbg=1/.test(location.search)){
     dig: function(n){ for (var i=0;i<(n||1);i++) digAt(); return state.inv.slice(); },
     place: function(n){ for (var i=0;i<(n||1);i++) placeAt(); return state.inv.slice(); },
     act: function(){ doAction(); return ride.on; },
+    /* 生存数值：不传参读，传参直接写（测试用） */
+    vitals: function(seed){
+      if (seed){
+        if (typeof seed.hp === 'number') state.hp = clamp(seed.hp, 0, VIT_HP_MAX);
+        if (typeof seed.thirst === 'number') state.thirst = clamp(seed.thirst, 0, VIT_TH_MAX);
+        if (typeof seed.stam === 'number') state.stam = clamp(seed.stam, 0, VIT_ST_MAX);
+        if (typeof seed.water === 'number'){ state.water = clamp(seed.water, 0, WATER_MAX); refreshChips(); }
+        refreshVitals();
+      }
+      return { hp: +state.hp.toFixed(2), thirst: +state.thirst.toFixed(2),
+               stam: +state.stam.toFixed(2), water: state.water };
+    },
+    drink: function(){ return drinkFlask(); },
+    hurt: function(a){ hurtPlayer(a, 'test'); return +state.hp.toFixed(2); },
+    vitConst: function(){
+      return { thRate: VIT_TH_RATE, dryHp: VIT_DRY_HP, hpRegen: VIT_HP_REGEN, drink: VIT_TH_DRINK,
+               stRegen: VIT_ST_REGEN, stRegenMove: VIT_ST_REGEN_MOVE, digCost: VIT_DIG_COST };
+    },
+    nearType: function(){ return nearTarget ? nearTarget.type : null; },
+    wellPos: function(){
+      for (var i=0;i<interactables.length;i++){
+        if (interactables[i].type === 'well' || interactables[i].type === 'pond'){
+          return { type: interactables[i].type, pos: interactables[i].pos.toArray() };
+        }
+      }
+      return null;
+    },
     sel: function(i){ setSel(i); },
     setUp: function(x,y,z){
       var u = new V3(x,y,z).normalize();
