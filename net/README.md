@@ -3,8 +3,10 @@
 ## 0. 公网联机（不同 WiFi、手机流量也能进同一个房间）
 
 **公网地址：每次启动脚本会打印一个 `https://xxxx.trycloudflare.com`。**
-当前实测可用的地址是 `https://demanding-bookstore-southeast-collaborative.trycloudflare.com`
+当前实测可用的地址是 `https://washer-cow-netscape-sail.trycloudflare.com`
 ——它只在这次隧道还活着时有效，隧道一停就作废，别收藏。
+页面返回 530 时先看 cloudflared 日志：有 `Registered tunnel connection` 才算隧道通了；
+只有 `Failed to dial ... 7844` 说明本机/代理拦了 QUIC 和 TCP 7844，隧道建不起来。
 
 **电脑关了就断：**房间服务和隧道都跑在这台电脑上，电脑关机 / 睡眠 / 关掉脚本，
 联机立刻断开（单机存档不受影响）。
