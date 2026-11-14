@@ -3711,6 +3711,7 @@ function digAt(){
   refreshInv();
   refreshQuests();
   netDig();
+  netWorldCrater(cr);       /* 洞的深度/是否挖穿，对方立刻能看到并重建坑壁 */
   persist();
 }
 
@@ -3724,7 +3725,7 @@ function placeAt(){
     return;
   }
   var tgt = placeTargetDir();
-  var cr = null;
+  var cr = null, tIdx = -1;
   for (var i=0;i<craters.length;i++){
     var ang = Math.acos(clamp(tgt.dot(craters[i].c), -1, 1)) * PLANET_R;
     if (ang < CR_R*0.92){ cr = craters[i]; break; }
@@ -3740,7 +3741,8 @@ function placeAt(){
       cr.d = cr.d - DIG_STEP;
     }
   } else {
-    var T = tiles[findTile(tgt)];
+    tIdx = findTile(tgt);
+    var T = tiles[tIdx];
     if (!T.removed && T.h + DIG_STEP > FILL_MAX + 1e-4){ toast('这里已经堆到顶了。'); return; }
     if (T.removed){
       T.removed = false;
@@ -3756,6 +3758,8 @@ function placeAt(){
   markTerrain();
   refreshInv();
   refreshQuests();
+  if (cr) netWorldCrater(cr);       /* 填坑：深度回退 / 封上通洞 */
+  else if (tIdx >= 0) netWorldTile(tIdx);   /* 堆土块：对方同步长出这一块 */
   persist();
 }
 
@@ -3809,6 +3813,7 @@ function doAction(){
     }
     refreshChips();
     refreshQuests();
+    netWorldGarden();       /* 玫瑰阶段 / 花园朵数，对方也开 */
     persist();
   }
   else if (nearTarget.type === 'baobab'){
@@ -3825,6 +3830,7 @@ function doAction(){
     toast('拔掉了一棵猴面包树苗。+1 星尘');
     refreshChips();
     refreshQuests();
+    netWorldTree(bi);       /* 对方那棵也一起消失 */
     persist();
     nearTarget = null;
     actBtn.classList.remove('on');
@@ -4208,6 +4214,122 @@ var netCloseEl = document.getElementById('netClose');
 function netFull(){ NET.full = true; }
 function netDig(){ NET.digSeq++; }
 
+/* ---------------------------------------------------------------- 地形同步
+   位置/朝向一直有同步，但挖出来的坑、堆上去的土块、拔掉的树苗、开的花以前只存在本机：
+   对方走进去会掉下去（高度算的是自己那份），却看不到任何变化。
+   这里把地形当“世界状态”同步：
+     - 本人每次改动只发一条增量（q:c/q:t/q:p/q:g）
+     - 刚连上 / 有人进来时发一次全量（q:all），后加入的一方立刻对上当前地形
+   收到后统一 markTerrain() 重建网格，不是只改数据。 */
+function worldSnapshot(){
+  var mods = [];
+  for (var i=0;i<tiles.length;i++){
+    var T = tiles[i];
+    if (T.h !== 0 || T.removed) mods.push([i, +T.h.toFixed(3), T.removed ? 1 : 0]);
+  }
+  return {
+    t: 'world', q: 'all',
+    cr: craters.map(function(cr){
+      return [+cr.c.x.toFixed(4), +cr.c.y.toFixed(4), +cr.c.z.toFixed(4), +cr.d.toFixed(3), cr.p ? 1 : 0];
+    }),
+    tl: mods,
+    bb: state.pulledToday.slice(),
+    rs: state.roseStage, gd: state.garden
+  };
+}
+function netWorld(msg){
+  var ws = NET.ws;
+  if (!ws || ws.readyState !== 1) return false;
+  try { ws.send(JSON.stringify(msg)); return true; } catch(e){ return false; }
+}
+function netWorldAll(){ return netWorld(worldSnapshot()); }
+function netWorldCrater(cr){
+  if (!cr) return false;
+  return netWorld({ t:'world', q:'c',
+    c:[+cr.c.x.toFixed(4), +cr.c.y.toFixed(4), +cr.c.z.toFixed(4)],
+    d:+cr.d.toFixed(3), p: cr.p ? 1 : 0 });
+}
+function netWorldTile(i){
+  var T = tiles[i];
+  if (!T) return false;
+  return netWorld({ t:'world', q:'t', i:i, h:+T.h.toFixed(3), r: T.removed ? 1 : 0 });
+}
+function netWorldTree(i){ return netWorld({ t:'world', q:'p', i:i }); }
+function netWorldGarden(){ return netWorld({ t:'world', q:'g', rs: state.roseStage, gd: state.garden }); }
+
+var _wv = new V3();
+function netCraterNear(dir){
+  for (var i=0;i<craters.length;i++){
+    var ang = Math.acos(clamp(dir.dot(craters[i].c), -1, 1)) * PLANET_R;
+    if (ang < CR_R*0.92) return craters[i];
+  }
+  return null;
+}
+function netApplyCrater(c, d, p){
+  if (!Array.isArray(c) || c.length < 3) return false;
+  _wv.set(+c[0] || 0, +c[1] || 0, +c[2] || 0);
+  if (_wv.lengthSq() < 0.1) return false;
+  _wv.normalize();
+  var nd = clamp(+d || 0, 0, DIG_DEPTH);
+  var cr = netCraterNear(_wv);
+  if (!cr){
+    craters.push({ c: _wv.clone(), d: nd, p: !!p });
+    return true;
+  }
+  if (Math.abs(cr.d - nd) > 1e-4 || !!cr.p !== !!p){
+    cr.d = nd; cr.p = !!p;
+    return true;
+  }
+  return false;
+}
+function netApplyTree(i){
+  i = i | 0;
+  if (i < 0 || i >= baobabs.length) return;
+  if (state.pulledToday.indexOf(i) < 0) state.pulledToday.push(i);
+  var b = baobabs[i];
+  if (b.alive){ b.alive = false; b.root.visible = false; }
+  refreshQuests();
+  persist();
+}
+function netApplyWorld(m){
+  if (!m || m.q === 'req') return;
+  var dirty = false;
+  if (m.q === 'all'){
+    if (Array.isArray(m.cr)) m.cr.forEach(function(c){
+      if (Array.isArray(c) && netApplyCrater([c[0], c[1], c[2]], c[3], c[4])) dirty = true;
+    });
+    if (Array.isArray(m.tl)) m.tl.forEach(function(t){
+      if (!Array.isArray(t)) return;
+      var T = tiles[t[0]];
+      if (!T) return;
+      var h = +t[1] || 0, rm = !!t[2];
+      if (T.h !== h || T.removed !== rm){ T.h = h; T.removed = rm; dirty = true; }
+    });
+    if (Array.isArray(m.bb)) m.bb.forEach(function(i){ netApplyTree(i); });
+    if (typeof m.rs === 'number' && m.rs > state.roseStage){ applyRoseStage(m.rs, true); dirty = true; }
+    if (typeof m.gd === 'number' && m.gd > state.garden){ applyGarden(m.gd, true); dirty = true; }
+  } else if (m.q === 'c'){
+    if (netApplyCrater(m.c, m.d, m.p)) dirty = true;
+  } else if (m.q === 't'){
+    var T2 = tiles[m.i];
+    if (T2){
+      var h2 = +m.h || 0, r2 = !!m.r;
+      if (T2.h !== h2 || T2.removed !== r2){ T2.h = h2; T2.removed = r2; dirty = true; }
+    }
+  } else if (m.q === 'p'){
+    netApplyTree(m.i);
+  } else if (m.q === 'g'){
+    if (typeof m.rs === 'number' && m.rs > state.roseStage){ applyRoseStage(m.rs, true); dirty = true; }
+    if (typeof m.gd === 'number' && m.gd > state.garden){ applyGarden(m.gd, true); dirty = true; }
+  }
+  if (dirty){
+    markTerrain();          /* 下一帧重建 base + overlay，坑/土块/井口一起刷新 */
+    refreshChips();
+    refreshQuests();
+    persist();              /* 顺手落盘：刷新页面后对方的改动也还在 */
+  }
+}
+
 function defaultServer(){
   var h = location.hostname;
   if (location.protocol === 'file:' || !h) return 'ws://localhost:18201/ws';
@@ -4433,9 +4555,20 @@ function netUpdateRemotes(dt){
     }
     if (!rm.hasState || !rm.R) continue;
     var R = rm.R;
-    rm.up.lerp(rm.tUp, 1 - Math.exp(-12*dt));
-    if (rm.up.lengthSq() < 1e-8) rm.up.copy(rm.tUp); else rm.up.normalize();
-    rm.r = damp(rm.r, rm.tR, 12, dt);
+    /* 掉穿星球时 up 会瞬间翻到对面（点积 ≈ -1）。按帧 lerp 会让远程角色从地壳里
+       横着扫出来，看起来就是“横躺、半个身子埋进地面”。这种大跳直接切过去。 */
+    var snap = rm.up.dot(rm.tUp) < 0.2;
+    if (snap){
+      rm.up.copy(rm.tUp);
+      rm.r = rm.tR;
+      rm.f.copy(rm.tF);
+      if (rm.f.lengthSq() < 1e-8) rm.f.set(0, 0, 1);
+      rm.f.normalize();
+    } else {
+      rm.up.lerp(rm.tUp, 1 - Math.exp(-12*dt));
+      if (rm.up.lengthSq() < 1e-8) rm.up.copy(rm.tUp); else rm.up.normalize();
+      rm.r = damp(rm.r, rm.tR, 12, dt);
+    }
 
     _rnV1.copy(rm.tF).addScaledVector(rm.up, -rm.tF.dot(rm.up));
     if (_rnV1.lengthSq() < 1e-8) _rnV1.set(0,0,1).addScaledVector(rm.up, -rm.up.z);
@@ -4447,7 +4580,7 @@ function netUpdateRemotes(dt){
     _rnV2.crossVectors(rm.up, rm.f);
     _rnM.makeBasis(_rnV2, rm.up, rm.f);
     _rnQ.setFromRotationMatrix(_rnM);
-    if (!rm._initQ){ rm.q.copy(_rnQ); rm._initQ = true; }
+    if (!rm._initQ || snap){ rm.q.copy(_rnQ); rm._initQ = true; }
     else rm.q.slerp(_rnQ, 1 - Math.exp(-14*dt));
 
     rm.mv = damp(rm.mv, rm.tMv, 8, dt);
@@ -4601,10 +4734,16 @@ function netOpen(){
       NET.peerId = m.id;
       netSend(true);
       netUi();
+      /* 房间里已经有人：先要一份地形全量，别让后进来的一方看到“原样的星球” */
+      if (Array.isArray(m.peers) && m.peers.length) netWorld({ t:'world', q:'req' });
       if (!NET.joinedOnce){ NET.joinedOnce = true; toast('联机已连上：' + NET.room); }
     } else if (m.t === 'peer-join'){
       netSend(true);
+      netWorldAll();          /* 新同伴进来：把当前地形（坑/土块/树/花）一次性交给他 */
       netUi();
+    } else if (m.t === 'world'){
+      if (m.q === 'req') netWorldAll();
+      else netApplyWorld(m);
     } else if (m.t === 'peer-leave'){
       var rm = netRemotes[String(m.id)];
       if (rm) netStartFade(rm);
@@ -5408,6 +5547,7 @@ function dismount(){
   var p = spot.clone().multiplyScalar(PLANET_R);
   collideSolids(p, 0.34);
   playerUp.copy(p).normalize();
+  snapHeadingToUp();
   var gR2 = groundRadiusAt(playerUp);
   playerR = gR2 < 0 ? PLANET_R : gR2;
   falling = false; playerVR = 0;
@@ -5423,6 +5563,22 @@ var tmpV1 = new V3(), tmpV2 = new V3(), tmpV3 = new V3();
 var tmpQ1 = new QT(), tmpM1 = new THREE.Matrix4();
 var _prevUp = new V3(), _newUp = new V3(), _right = new V3();
 var _actKey = '';
+
+/* playerUp 瞬间改写（掉穿到另一头、下羊）后，把角色骨架直接对齐新法线。
+   不强转的话 headingQ 只在移动时才插值，站着不动就会一直横躺在地表上。 */
+function snapHeadingToUp(){
+  var f = new V3(0, 0, 1).applyQuaternion(headingQ);
+  f.addScaledVector(playerUp, -f.dot(playerUp));
+  if (f.lengthSq() < 1e-6){
+    f.set(0, 0, 1).addScaledVector(playerUp, -playerUp.z);
+    if (f.lengthSq() < 1e-6) f.set(1, 0, 0).addScaledVector(playerUp, -playerUp.x);
+  }
+  f.normalize();
+  heading.copy(f);
+  tmpV3.crossVectors(playerUp, f).normalize();
+  tmpM1.makeBasis(tmpV3, playerUp, f);
+  headingQ.setFromRotationMatrix(tmpM1);
+}
 
 /* 站在地表：贴地、能迈上一层台阶；没有支撑就掉下去 */
 function updatePlayerGround(dt){
@@ -5455,6 +5611,7 @@ function updatePlayerGround(dt){
     } else if (playerR < CORE_R + 0.9){
       /* 挖穿掉下去：落到内核前从星球另一头出来，不落进虚空 */
       playerUp.negate();
+      snapHeadingToUp();
       var T2 = tiles[findTile(playerUp)];
       playerR = PLANET_R + Math.max(T2.h, 0) + 0.5;
       playerVR = 0; falling = false;
@@ -6037,6 +6194,9 @@ if (/[?&]dbg=1/.test(location.search)){
           r: +rm.r.toFixed(2), mv: +rm.mv.toFixed(2), ride: rm.ride,
           f: rm.f.toArray().map(function(v){ return +v.toFixed(3); }),
           digT: +rm.digT.toFixed(2),
+          q: R ? R.group.quaternion.toArray().map(function(v){ return +v.toFixed(3); }) : null,
+          body: R ? [+R.body.rotation.x.toFixed(3), +R.body.rotation.y.toFixed(3), +R.body.rotation.z.toFixed(3)] : null,
+          pos: R ? R.group.position.toArray().map(function(v){ return +v.toFixed(3); }) : null,
           visParts: R ? Object.keys(R.parts).filter(function(p){ return R.parts[p].visible; }) : [],
           mats: R ? Object.keys(R.mats).map(function(mk){
             var mm = R.mats[mk];
@@ -6047,6 +6207,43 @@ if (/[?&]dbg=1/.test(location.search)){
       });
       return { on: NET.on, connected: NET.connected, room: NET.room, server: NET.server,
                peerId: NET.peerId, retry: NET.retry, digSeq: NET.digSeq, remotes: list };
+    },
+    /* 取证：角色视觉朝向 vs 重力法线的夹角（1=站正，0=横躺） */
+    pose: function(){
+      var g = activeRig.group;
+      g.updateMatrixWorld(true);
+      var q = new THREE.Quaternion(); g.getWorldQuaternion(q);
+      var up = new V3(0, 1, 0).applyQuaternion(q);
+      var fwd = new V3(0, 0, 1).applyQuaternion(q);
+      return { align: +up.dot(playerUp).toFixed(3),
+               up: up.toArray().map(function(v){ return +v.toFixed(3); }),
+               fwd: fwd.toArray().map(function(v){ return +v.toFixed(3); }),
+               r: +playerR.toFixed(2), falling: falling,
+               playerUp: playerUp.toArray().map(function(v){ return +v.toFixed(3); }) };
+    },
+    /* 地形取证：坑、改过的瓦片、树苗、花 */
+    world: function(){
+      var mods = [];
+      for (var i=0;i<tiles.length;i++){
+        var T = tiles[i];
+        if (T.h !== 0 || T.removed) mods.push([i, +T.h.toFixed(2), T.removed ? 1 : 0]);
+      }
+      var alive = 0;
+      for (var j=0;j<baobabs.length;j++) if (baobabs[j].alive) alive++;
+      return {
+        craters: craters.map(function(cr){
+          return { c: cr.c.toArray().map(function(v){ return +v.toFixed(3); }),
+                   d: +cr.d.toFixed(2), p: !!cr.p };
+        }),
+        mods: mods,
+        treesAlive: alive, pulled: state.pulledToday.slice(),
+        trees: baobabs.map(function(b, i){
+          return { i: i, alive: b.alive, pos: b.pos.toArray().map(function(v){ return +v.toFixed(3); }) };
+        }),
+        roseDir: ROSE_DIR.toArray().map(function(v){ return +v.toFixed(4); }),
+        roseStage: state.roseStage, garden: state.garden,
+        dug: state.digs, placed: state.placed
+      };
     },
     netJoin: function(room, server){
       if (room !== undefined && room !== null) netRoomEl.value = room;
