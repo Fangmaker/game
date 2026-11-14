@@ -135,7 +135,8 @@ async def handler(ws):
                 continue
             t = msg.get("t")
 
-            if t == "state":
+            # state = 位置/朝向；world = 地形（坑/土块/树苗/花）。都按房间原样转发。
+            if t in ("state", "world"):
                 msg["id"] = pid
                 msg["srx"] = now_ms()
                 await broadcast(room, json.dumps(msg), exclude=pid)
