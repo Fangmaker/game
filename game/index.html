@@ -115,6 +115,13 @@
   }
   .q.done{color:rgba(244,234,217,.26)}
   .q.done i{background:rgba(159,177,132,.55)}
+  @keyframes qflash{
+    0%{opacity:.15;transform:translateX(-5px)}
+    40%{opacity:1;transform:none;color:#ffe6b8}
+    100%{color:rgba(244,234,217,.3)}
+  }
+  .q.flash{animation:qflash .95s ease}
+  .q.flash i{background:#e8c795;box-shadow:0 0 9px rgba(232,199,149,.95)}
 
   /* ---------- 提示 / toast ---------- */
   #toast{
@@ -124,9 +131,18 @@
     color:rgba(248,238,220,.94);
     text-shadow:0 2px 14px rgba(0,0,0,.8);
     opacity:0;transition:opacity .5s ease,transform .5s ease;
-    pointer-events:none;z-index:7;white-space:nowrap;
+    pointer-events:none;z-index:7;white-space:normal;text-align:center;line-height:1.4;
+    max-width:88vw;
   }
   #toast.show{opacity:1;transform:translate(-50%,0);}
+  /* 任务 / 解锁提示：放到画面下方居中，避免压住左上角任务条 */
+  #toast.quest{
+    top:auto;bottom:calc(env(safe-area-inset-bottom,0px) + 150px);
+    padding:10px 16px;border-radius:12px;
+    background:rgba(9,14,26,.62);border:1px solid rgba(232,199,149,.3);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+    text-shadow:0 1px 8px rgba(0,0,0,.7);
+  }
 
   /* ---------- 摇杆 ---------- */
   #joy{
@@ -324,6 +340,12 @@
   }
   .ccard i{width:17px;height:17px;border-radius:50%;display:block;border:1px solid rgba(255,255,255,.18)}
   .ccard.on{border-color:rgba(232,199,149,.82);background:rgba(232,199,149,.15);color:#f4ead9}
+  .ccard.lock{opacity:.6;border-style:dashed;color:rgba(244,234,217,.5)}
+  .ccard.lock i{background:rgba(244,234,217,.07);border-color:rgba(244,234,217,.16)}
+  .ccard .req{font-size:9px;line-height:1.15;letter-spacing:0;color:rgba(232,199,149,.55);max-width:100%;word-break:break-word;text-align:center}
+  #lockTip{font-size:10px;letter-spacing:1px;color:rgba(244,234,217,.34);text-align:center;margin:-6px 0 10px}
+  @keyframes lookpulse{0%{box-shadow:0 0 0 0 rgba(232,199,149,.62)}70%{box-shadow:0 0 0 13px rgba(232,199,149,0)}100%{box-shadow:0 0 0 0 rgba(232,199,149,0)}}
+  #lookBtn.new{animation:lookpulse 1.4s ease 2;border-color:rgba(232,199,149,.9);color:#ffe6b8}
   .orow{display:flex;align-items:center;gap:9px;margin-bottom:8px}
   .orow .lbl{flex:0 0 44px;font-size:11px;letter-spacing:1px;color:rgba(244,234,217,.5)}
   .opts{display:flex;gap:6px;flex-wrap:wrap}
@@ -529,6 +551,7 @@
   <div class="panel">
     <div class="h">旅 伴</div>
     <div class="chars" id="charList"></div>
+    <div id="lockTip"></div>
     <div id="outfitRows"></div>
     <button id="lookClose">出 发</button>
   </div>
@@ -3285,7 +3308,9 @@ var state = {
   stam: 100,
   kills: 0,
   lv: 1,
-  xp: 0
+  xp: 0,
+  unlocked: ['prince'],
+  qClaimed: []
 };
 var WATER_MAX = 6;
 /* 生存数值（第一批）：口渴线性掉落，落到 0 开始掉血；体力给挖土和后续战斗用 */
@@ -3333,6 +3358,31 @@ function gainXp(n){
     persist();
   }
   refreshVitals(); refreshLv();
+  if (up) queueUnlockCheck(1500);
+}
+
+/* 角色解锁条件（第四批）：开局只有小王子，其余按进度逐个放开。
+   test 只读 state，随时可调用；文本同时显示在旅伴面板的锁卡上。 */
+var UNLOCK_DEFS = [
+  { id:'prince',      name:'小王子',   text:'默认旅伴',           test:function(){ return true; } },
+  { id:'fox',         name:'狐狸',     text:'让小羊成为朋友',     test:function(){ return !!state.sheepFriend; } },
+  { id:'king',        name:'国王',     text:'看 3 次日落',        test:function(){ return (state.sunsets|0) >= 3; } },
+  { id:'lamplighter', name:'点灯人',   text:'挖穿星球再爬出来',   test:function(){ return !!state.punched && !!state.fell; } },
+  { id:'rose',        name:'玫瑰',     text:'把玫瑰养到开花',     test:function(){ return (state.roseStage|0) >= 3; } },
+  { id:'snake',       name:'蛇',       text:'升到 4 级',           test:function(){ return (state.lv|0) >= 4; } },
+  { id:'merchant',    name:'商人',     text:'攒到 20 星尘',       test:function(){ return (state.dust|0) >= 20; } },
+  { id:'geographer',  name:'地理学家', text:'收齐 6 枚星光碎片',  test:function(){ return shardTaken() >= 6; } }
+];
+function unlockDef(id){
+  for (var i=0;i<UNLOCK_DEFS.length;i++) if (UNLOCK_DEFS[i].id === id) return UNLOCK_DEFS[i];
+  return null;
+}
+function unlockText(id){ var d = unlockDef(id); return d ? d.text : ''; }
+function isUnlocked(id){ return state.unlocked.indexOf(id) >= 0; }
+function shardTaken(){
+  var n = 0;
+  for (var i=0;i<state.shards.length;i++) if (state.shards[i]) n++;
+  return n;
 }
 var hadSave = false;
 
@@ -3340,7 +3390,7 @@ try {
   var raw = localStorage.getItem(SAVE_KEY);
   if (raw){
     var sv = JSON.parse(raw);
-    if (sv && (sv.v >= 2 && sv.v <= 7)){
+    if (sv && (sv.v >= 2 && sv.v <= 8)){
       hadSave = true;
       state.day = sv.day || 1;
       state.sunsets = sv.sunsets || 0;
@@ -3368,6 +3418,8 @@ try {
       state.thirst = sv.thirst === undefined ? VIT_TH_MAX : clamp(+sv.thirst || 0, 0, VIT_TH_MAX);
       state.stam = sv.stam === undefined ? VIT_ST_MAX : clamp(+sv.stam || 0, 0, VIT_ST_MAX);
       state.kills = sv.kills|0;
+      if (Array.isArray(sv.unlocked)) state.unlocked = sv.unlocked.filter(function(id){ return !!unlockDef(id); });
+      if (Array.isArray(sv.qClaimed)) state.qClaimed = sv.qClaimed.filter(function(id){ return typeof id === 'string'; });
       /* 恢复挖填过的地形 */
       if (Array.isArray(sv.mods)){
         sv.mods.forEach(function(m){
@@ -3392,6 +3444,13 @@ try {
   }
 } catch(e){}
 
+/* 老存档迁移：条件已满足的角色静默补解锁；存档里的角色若被锁则退回小王子 */
+if (state.unlocked.indexOf('prince') < 0) state.unlocked.push('prince');
+for (var _ui=0;_ui<UNLOCK_DEFS.length;_ui++){
+  if (!isUnlocked(UNLOCK_DEFS[_ui].id) && UNLOCK_DEFS[_ui].test()) state.unlocked.push(UNLOCK_DEFS[_ui].id);
+}
+if (!isUnlocked(state.char)) state.char = 'prince';
+
 function persist(){
   try {
     var mods = [];
@@ -3400,7 +3459,7 @@ function persist(){
       if (T.h !== 0 || T.removed) mods.push([i, +T.h.toFixed(3), T.removed ? 1 : 0]);
     }
     localStorage.setItem(SAVE_KEY, JSON.stringify({
-      v: 7,
+      v: 8,
       day: state.day, sunsets: state.sunsets,
       hp: +state.hp.toFixed(1), thirst: +state.thirst.toFixed(1), stam: +state.stam.toFixed(1),
       kills: state.kills|0, lv: state.lv, xp: +state.xp.toFixed(1),
@@ -3412,6 +3471,7 @@ function persist(){
       sheepFriend: state.sheepFriend,
       char: state.char, outfits: state.outfits,
       skillCd: state.skillCd,
+      unlocked: state.unlocked, qClaimed: state.qClaimed,
       inv: state.inv, sel: state.sel,
       digs: state.digs, placed: state.placed,
       punched: state.punched, fell: state.fell,
@@ -3654,8 +3714,9 @@ var actLabel = document.getElementById('actLabel');
 var toastEl = document.getElementById('toast');
 var toastTimer = null;
 
-function toast(txt){
+function toast(txt, kind){
   toastEl.textContent = txt;
+  toastEl.classList.toggle('quest', kind === 'quest');
   toastEl.classList.add('show');
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(function(){ toastEl.classList.remove('show'); }, 2300);
@@ -4215,49 +4276,143 @@ resetDayTrees(true);
 
 /* ---------------------------------------------------------------- 任务面板 */
 var questsEl = document.getElementById('quests');
+
+/* 任务定义：done 判定与「已完成」的显示分开写，完成瞬间发奖励、弹提示、行内闪一下。
+   奖励只发一次（state.qClaimed 落盘），每日任务重做只更新进度、不重复给星尘。 */
+var QDEFS = [
+  { id:'rose',   label:'给玫瑰浇水',       dust:6,  xp:25, when:function(){ return state.roseStage >= 3; } },
+  { id:'garden', label:'在玫瑰旁种花',     dust:8,  xp:30, when:function(){ return state.garden >= GARDEN_N; } },
+  { id:'dig',    label:'挖穿脚下的星球',   dust:5,  xp:40, when:function(){ return !!state.punched; } },
+  { id:'place',  label:'把挖出来的土盖回去', dust:3, xp:15, when:function(){ return state.placed >= 3; } },
+  { id:'trees',  label:'拔掉今天的树苗',   dust:3,  xp:15, when:function(){
+      for (var i=0;i<baobabs.length;i++) if (baobabs[i].alive) return false;
+      return baobabs.length > 0;
+    } },
+  { id:'shards', label:'收齐十二枚星光',   dust:20, xp:60, when:function(){
+      if (!shards.length) return false;
+      for (var i=0;i<shards.length;i++) if (!shards[i].taken) return false;
+      return true;
+    } },
+  { id:'sheep',  label:'找到星球背面的小羊', dust:4, xp:25, when:function(){ return !!state.sheepFriend; } },
+  { id:'fall',   label:'掉到星球的另一面', dust:5,  xp:40, when:function(){ return !!state.fell; } }
+];
+var qPrimed = false;
+function qClaimed(id){ return state.qClaimed.indexOf(id) >= 0; }
+function questRowFlash(id){
+  for (var i=0;i<questsEl.children.length;i++){
+    var el = questsEl.children[i];
+    if (el.dataset.id === id){
+      el.classList.remove('flash');
+      void el.offsetWidth;
+      el.classList.add('flash');
+    }
+  }
+}
+function checkQuests(){
+  var primed = qPrimed;
+  var got = 0;
+  for (var i=0;i<QDEFS.length;i++){
+    var d = QDEFS[i];
+    if (qClaimed(d.id) || !d.when()) continue;
+    state.qClaimed.push(d.id);
+    if (!primed) continue;             /* 首帧只登记老进度，不补发奖励 */
+    state.dust += d.dust;
+    got++;
+    refreshChips();
+    questRowFlash(d.id);
+    spawnSparkle(playerPos, playerUp, 10, '#ffe0a8');
+    ringPulse('#ffe0a8', 0.45, 4.4, 0.9);
+    toast('任务完成：' + d.label + '　+' + d.dust + ' 星尘 · +' + d.xp + ' 经验', 'quest');
+    if (d.xp) gainXp(d.xp);
+  }
+  qPrimed = true;
+  if (got) persist();
+}
+
 function refreshQuests(){
   var items = [];
   if (state.roseStage < 3){
-    items.push(['给玫瑰浇水 <b>' + state.roseStage + '/3</b>', false]);
+    items.push({ id:'rose', done:false, html:'给玫瑰浇水 <b>' + state.roseStage + '/3</b>' });
   } else if (state.garden < GARDEN_N){
-    items.push(['在玫瑰旁种花 <b>' + state.garden + '/' + GARDEN_N + '</b>', false]);
+    items.push({ id:'garden', done:false, html:'在玫瑰旁种花 <b>' + state.garden + '/' + GARDEN_N + '</b>' });
   } else {
-    items.push(['玫瑰开满了', true]);
+    items.push({ id:'garden', done:true, html:'玫瑰开满了' });
   }
+
   var aliveTrees = 0;
   for (var i=0;i<baobabs.length;i++) if (baobabs[i].alive) aliveTrees++;
-  if (aliveTrees > 0) items.push(['拔掉猴面包树苗 <b>' + (treesForDay(state.day) - aliveTrees) + '/' + treesForDay(state.day) + '</b>', false]);
-  else items.push(['今天的树苗拔干净了', true]);
+  if (aliveTrees > 0){
+    items.push({ id:'trees', done:false, html:'拔掉猴面包树苗 <b>' + (treesForDay(state.day) - aliveTrees) + '/' + treesForDay(state.day) + '</b>' });
+  } else {
+    items.push({ id:'trees', done:true, html:'今天的树苗拔干净了' });
+  }
 
   var got = 0;
   for (var s=0;s<shards.length;s++) if (shards[s].taken) got++;
-  items.push(['收集星光碎片 <b>' + got + '/' + shards.length + '</b>', got >= shards.length]);
+  items.push({ id:'shards', done:got >= shards.length, html:'收集星光碎片 <b>' + got + '/' + shards.length + '</b>' });
 
-  if (!state.sheepFriend) items.push(['在星球背面找到小羊', false]);
+  if (!state.sheepFriend) items.push({ id:'sheep', done:false, html:'在星球背面找到小羊' });
 
   /* 挖土 / 建造：目标链最后一段，做完有明确变化 */
   if (!state.punched){
     var digNeed = Math.round(DIG_DEPTH_MAX / DIG_STEP);   /* 17：5.1/0.3 的浮点偏差不能 ceil 成 18 */
-    items.splice(1, 0, ['挖穿脚下的星球 <b>' + Math.min(state.digs, digNeed) + '/' + digNeed + '</b>', false]);
+    items.push({ id:'dig', done:false, html:'挖穿脚下的星球 <b>' + Math.min(state.digs, digNeed) + '/' + digNeed + '</b>' });
   } else if (!state.fell){
-    items.splice(1, 0, ['从挖穿的洞里掉下去', false]);
+    items.push({ id:'fall', done:false, html:'从挖穿的洞里掉下去' });
   } else {
-    items.splice(1, 0, ['从星球另一头爬出来了', true]);
+    items.push({ id:'fall', done:true, html:'从星球另一头爬出来了' });
   }
-  if (state.placed < 3){
-    items.splice(2, 0, ['把挖出来的土盖回去 <b>' + state.placed + '/3</b>', false]);
-  } else {
-    items.splice(2, 0, ['土块搭起来了', true]);
-  }
+  items.push(state.placed < 3
+    ? { id:'place', done:false, html:'把挖出来的土盖回去 <b>' + state.placed + '/3</b>' }
+    : { id:'place', done:true, html:'土块搭起来了' });
+
+  /* 顺序：玫瑰 → 挖穿 → 盖土 → 树苗 → 星光 → 小羊，最多显示 4 条 */
+  var order = ['rose', 'garden', 'dig', 'fall', 'place', 'trees', 'shards', 'sheep'];
+  items.sort(function(a, b){ return order.indexOf(a.id) - order.indexOf(b.id); });
 
   var html = '';
   var shown = 0;
   for (var j=0;j<items.length && shown<4;j++){
-    html += '<div class="q' + (items[j][1] ? ' done' : '') + '"><i></i><span>' + items[j][0] + '</span></div>';
+    var it = items[j];
+    html += '<div class="q' + (it.done ? ' done' : '') + '" data-id="' + it.id + '"><i></i><span>' + it.html + '</span></div>';
     shown++;
   }
   questsEl.innerHTML = html;
+
+  checkQuests();
+  checkUnlocks(false);
 }
+
+/* 角色解锁：条件达成即入列，提示一次并点亮右上角旅伴按钮 */
+function checkUnlocks(quiet){
+  var got = [];
+  for (var i=0;i<UNLOCK_DEFS.length;i++){
+    var u = UNLOCK_DEFS[i];
+    if (isUnlocked(u.id) || !u.test()) continue;
+    state.unlocked.push(u.id);
+    got.push(u);
+  }
+  if (!got.length) return got;
+  if (!quiet){
+    var names = got.map(function(u){ return u.name; }).join('、');
+    toast('解锁旅伴：' + names + '　在右上「旅伴」里切换', 'quest');
+    if (typeof lookBtn !== 'undefined' && lookBtn){
+      lookBtn.classList.remove('new');
+      void lookBtn.offsetWidth;
+      lookBtn.classList.add('new');
+    }
+    if (typeof lookEl !== 'undefined' && lookEl && lookEl.classList.contains('on')) refreshLook();
+  }
+  persist();
+  return got;
+}
+/* 升级 / 击杀后的解锁检查延后一点，别把刚到手的提示顶掉 */
+var unlockTimer = null;
+function queueUnlockCheck(ms){
+  if (unlockTimer) clearTimeout(unlockTimer);
+  unlockTimer = setTimeout(function(){ unlockTimer = null; checkUnlocks(false); }, ms || 900);
+}
+
 
 /* ---------------------------------------------------------------- 输入 */
 var keys = Object.create(null);
@@ -4365,22 +4520,36 @@ var lookBtn = document.getElementById('lookBtn');
 var lookClose = document.getElementById('lookClose');
 var charListEl = document.getElementById('charList');
 var outfitRowsEl = document.getElementById('outfitRows');
-var lookBuilt = false;
+var lockTipEl = document.getElementById('lockTip');
 
 function buildLook(){
-  if (lookBuilt) return;
-  lookBuilt = true;
   charListEl.innerHTML = '';
   CHAR_LIST.forEach(function(c){
+    var locked = !isUnlocked(c.id);
     var b = document.createElement('button');
-    b.className = 'ccard'; b.dataset.id = c.id;
+    b.className = 'ccard' + (state.char === c.id ? ' on' : '') + (locked ? ' lock' : '');
+    b.dataset.id = c.id;
+    b.title = locked ? ('解锁条件：' + unlockText(c.id)) : c.name;
     var i = document.createElement('i');
-    i.style.background = c.dot || '#e8c795';
+    i.style.background = locked ? 'rgba(244,234,217,.07)' : (c.dot || '#e8c795');
     b.appendChild(i);
     b.appendChild(document.createTextNode(c.name));
+    if (locked){
+      var req = document.createElement('span');
+      req.className = 'req';
+      req.textContent = unlockText(c.id);
+      b.appendChild(req);
+    }
     b.addEventListener('click', function(){
-      applyChar(c.id);
-      toast('现在是' + c.name + '。');
+      if (!isUnlocked(c.id)){
+        toast('「' + c.name + '」还没解锁：' + unlockText(c.id));
+        return;
+      }
+      if (state.char !== c.id){
+        applyChar(c.id);
+        toast('现在是' + c.name + '。');
+      }
+      refreshLook();
     });
     charListEl.appendChild(b);
   });
@@ -4392,6 +4561,7 @@ function refreshLook(){
   Array.prototype.forEach.call(charListEl.children, function(el){
     el.classList.toggle('on', el.dataset.id === cur);
   });
+  if (lockTipEl) lockTipEl.textContent = '旅伴 ' + state.unlocked.length + '/' + CHAR_LIST.length + ' · 锁住的点一下看解锁条件';
   outfitRowsEl.innerHTML = '';
   var defs = OUTFITS[cur] || [];
   var o = outfitOf(cur);
@@ -6028,6 +6198,8 @@ function updatePlayerGround(dt){
       camF.copy(nf);
       camera.position.copy(cp).addScaledVector(playerUp, 2.4).addScaledVector(nf, -3.4);
       persist();
+      /* 让「穿过星球」的提示先说完，再结算任务奖励 */
+      setTimeout(refreshQuests, 1600);
     }
   }
   if (!falling){ fallCam = false; }
@@ -6144,6 +6316,7 @@ function killMob(m, cause){
     refreshChips();
     persist();
     toast('根须怪散了，捡到 3 星尘。');
+    queueUnlockCheck(900);
   }
 }
 function clearMobs(cause){
@@ -6644,6 +6817,16 @@ function tick(){
 
 /* 启动 */
 var dbgEl = null;
+/* 调试传送：把角色放到球面方向 u 上（tp / tpDir 共用） */
+function teleportUp(u){
+  playerUp.copy(u);
+  playerR = Math.max(groundRadiusAt(u), PLANET_R - DIG_DEPTH_MAX);
+  falling = false; playerVR = 0;
+  snapHeadingToUp();
+  var cf = new V3().crossVectors(u, new V3(0,1,0)).normalize();
+  camF.copy(cf).negate();
+  camera.position.copy(playerUp).multiplyScalar(playerR + 2.2).addScaledVector(cf, -3.6);
+}
 if (/[?&]dbg=1/.test(location.search)){
   dbgEl = document.createElement('div');
   dbgEl.style.cssText = 'position:fixed;left:10px;bottom:10px;z-index:60;font:11px/1.4 monospace;color:#9f9;background:rgba(0,0,0,.55);padding:5px 7px;border-radius:4px;white-space:pre;';
@@ -6675,13 +6858,22 @@ if (/[?&]dbg=1/.test(location.search)){
         var f = new V3().crossVectors(u, new V3(0,1,0)).normalize();
         u = stepDir(u, f, d);
       }
-      playerUp.copy(u);
-      playerR = Math.max(groundRadiusAt(u), PLANET_R - DIG_DEPTH_MAX);
-      falling = false; playerVR = 0;
-      snapHeadingToUp();
-      var cf = new V3().crossVectors(u, new V3(0,1,0)).normalize();
-      camF.copy(cf).negate();
-      camera.position.copy(playerUp).multiplyScalar(playerR + 2.2).addScaledVector(cf, -3.6);
+      teleportUp(u);
+    },
+    tpDir: function(v){ teleportUp(new V3(v[0], v[1], v[2]).normalize()); },
+    tpSheep: function(v){
+      var u = new V3(v[0], v[1], v[2]).normalize();
+      sheep.up.copy(u);
+      sheep.r = Math.max(groundRadiusAt(u), PLANET_R - DIG_DEPTH_MAX);
+      sheep.air = false; sheep.vr = 0;
+      sheep.dir.copy(new V3().crossVectors(u, new V3(0,1,0)).normalize());
+      if (ride.on){ playerUp.copy(u); playerR = sheep.r + 0.30; snapHeadingToUp(); }
+    },
+    craterDir: function(){ return craters.length ? craters[craters.length-1].c.toArray() : null; },
+    craters: function(){
+      return craters.map(function(c){
+        return { c: c.c.toArray().map(function(v){ return +v.toFixed(3); }), d: +c.d.toFixed(2), p: !!c.p };
+      });
     },
     /* 固定步长跑一段时间，不受浏览器帧率/后台节流影响 */
     sim: function(sec, codes){
@@ -6713,7 +6905,7 @@ if (/[?&]dbg=1/.test(location.search)){
       camF.copy(t.normalize());
       camYaw = 0;
     },
-    befriend: function(){ sheep.friend = true; refreshQuests(); },
+    befriend: function(){ sheep.friend = true; state.sheepFriend = true; refreshQuests(); persist(); },
     goSheep: function(){
       var t = new V3().crossVectors(sheep.up, new V3(0,1,0));
       if (t.lengthSq() < 1e-8) t.set(1,0,0);
@@ -6794,6 +6986,25 @@ if (/[?&]dbg=1/.test(location.search)){
                hpMax: hpMax(), dmg: hitDmg(), tier: skillTier(), cd: skillCdOf(state.char) };
     },
     xp: function(n){ gainXp(n); return { lv: state.lv, xp: +state.xp.toFixed(1) }; },
+    /* 任务 / 角色解锁：验收用 */
+    quests: function(){
+      return QDEFS.map(function(d){
+        return { id: d.id, label: d.label, done: d.when(), claimed: qClaimed(d.id),
+                 dust: d.dust, xp: d.xp };
+      });
+    },
+    unlocked: function(){
+      return { list: state.unlocked.slice(), dust: state.dust,
+               cards: CHAR_LIST.map(function(c){
+                 return { id: c.id, name: c.name, on: isUnlocked(c.id), need: unlockText(c.id) };
+               }) };
+    },
+    unlock: function(name){
+      if (!rigs[name]) return null;
+      if (!isUnlocked(name)) state.unlocked.push(name);
+      refreshQuests(); persist();
+      return state.unlocked.slice();
+    },
     blast: function(){
       var A = SKILL_ATK[state.char] || {};
       return { hit: skillBlast(), tier: skillTier(), dmg: (A.d || 0) * skillTier(), r: A.r || 0 };
