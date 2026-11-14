@@ -3271,7 +3271,8 @@ var state = {
   skillCd: {},
   hp: 100,
   thirst: 100,
-  stam: 100
+  stam: 100,
+  kills: 0
 };
 var WATER_MAX = 6;
 /* 生存数值（第一批）：口渴线性掉落，落到 0 开始掉血；体力给挖土和后续战斗用 */
@@ -3314,6 +3315,7 @@ try {
       state.hp = sv.hp === undefined ? 100 : clamp(+sv.hp || 0, 1, VIT_HP_MAX);
       state.thirst = sv.thirst === undefined ? VIT_TH_MAX : clamp(+sv.thirst || 0, 0, VIT_TH_MAX);
       state.stam = sv.stam === undefined ? VIT_ST_MAX : clamp(+sv.stam || 0, 0, VIT_ST_MAX);
+      state.kills = sv.kills|0;
       /* 恢复挖填过的地形 */
       if (Array.isArray(sv.mods)){
         sv.mods.forEach(function(m){
@@ -3349,6 +3351,7 @@ function persist(){
       v: 6,
       day: state.day, sunsets: state.sunsets,
       hp: +state.hp.toFixed(1), thirst: +state.thirst.toFixed(1), stam: +state.stam.toFixed(1),
+      kills: state.kills|0,
       roseStage: state.roseStage, garden: state.garden,
       water: state.water, dust: state.dust,
       treesPulled: state.treesPulled,
@@ -3530,6 +3533,8 @@ function onPlayerDown(){
   state.thirst = VIT_TH_MAX * 0.6;
   state.stam = VIT_ST_MAX;
   if (ride.on){ ride.on = false; rideMoving = false; ghost.visible = false; }
+  /* 死亡重来：场上的怪一次性清掉，复活后重新刷新 */
+  clearMobs('down');
   playerUp.copy(HOME_DIR);
   playerR = Math.max(groundRadiusAt(HOME_DIR), PLANET_R);
   playerVR = 0; falling = false;
@@ -3596,6 +3601,8 @@ function setActIcon(kind){
     svg.innerHTML = '<path d="M5.5 13.5a2.6 2.6 0 0 1 .6-5.1 3 3 0 0 1 5.6-1.3 2.8 2.8 0 0 1 4.6 2.3 2.5 2.5 0 0 1 .2 4.9"/><path d="M6.6 13.2v3.4M9.4 13.4v3.2M14.4 13.4v3.2M17 13.2v3.4"/><circle cx="19.4" cy="10.6" r="1.7"/>';
   } else if (kind === 'pull'){
     svg.innerHTML = '<path d="M12 20.5v-6.5"/><path d="M12 14c0-2.4-2.6-3.2-4.1-2.3M12 14c0-2.4 2.6-3.2 4.1-2.3"/><path d="M8.4 20.5h7.2"/><path d="M9.5 4.2c1.6.4 3.4.4 5 0" opacity=".55"/>';
+  } else if (kind === 'hit'){
+    svg.innerHTML = '<path d="M5 19 16.5 7.5"/><path d="M13.6 4.4 18 2.6l-1.8 4.4"/><path d="M18.6 9.4l1.8 2.6-3.2.2"/><path d="M9.6 19.4l-3 1.4.6-3.2"/>';
   } else if (kind === 'ride'){
     svg.innerHTML = '<path d="M4.6 17.6c2.8 0 4.2-1.6 4.2-3.8 0-1.6-1.2-2.6-2.6-2.6"/><path d="M4.2 7.4c0-1 .8-1.8 1.8-1.8"/><path d="M10.2 17.6h8"/><path d="M12.6 10.8 15.4 7.6l3.8 1"/><circle cx="19.8" cy="12.6" r="1.5"/>';
   } else {
@@ -3945,6 +3952,7 @@ function breakDome(instant){
 /* ---------------------------------------------------------------- 动作 */
 function doAction(){
   if (sunset.active) return;
+  if (attackNearby()) return;
   if (ride.on){ dismount(); return; }
   if (!nearTarget) return;
   if (navigator.vibrate) { try { navigator.vibrate(8); } catch(e){} }
@@ -5910,6 +5918,232 @@ function updatePlayerGround(dt){
   if (!falling){ fallCam = false; }
 }
 
+/* ---------------------------------------------------------------- 怪物 / 战斗
+   第二批：地表会刷新根须怪（猴面包树的根）。它们追人、贴脸咬人；
+   玩家按 E / 空格（或右下动作键）攻击，耗尽血条后散成一堆星尘。
+   死亡沿用 onPlayerDown：怪全清、回井边重来。 */
+var MOB_MAX = 3;
+var MOB_HP = 60, MOB_DMG = 8, MOB_ATK_CD = 1.1, MOB_RANGE = 1.35;
+var MOB_SPEED = 1.8, MOB_AGGRO = 8.5, MOB_SPAWN_CD = 6.0, MOB_MIN_D = 9.5, MOB_MAX_D = 14.0;
+var HIT_DMG = 22, HIT_RANGE = 2.2, HIT_CD = 0.45;
+var mobs = [], mobSpawnT = 4.0, atkCd = 0, MOB_ENABLED = true, mobHinted = false;
+
+function buildMob(){
+  var g = new THREE.Group();
+  var mat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#453730'), roughness: 1, flatShading: true });
+  var rootMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#2c231f'), roughness: 1, flatShading: true });
+  var eyeMat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#ff6a4d') });
+
+  var body = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 1), mat);
+  body.position.y = 0.56;
+  body.scale.set(1, 0.94, 1);
+  g.add(body);
+  /* 树瘤：两个不规则的疙瘩，远看像块活着的木头 */
+  for (var b=0;b<2;b++){
+    var knot = new THREE.Mesh(new THREE.IcosahedronGeometry(0.2, 0), mat);
+    knot.position.set(b?0.28:-0.26, 0.68, b?0.1:-0.14);
+    knot.scale.set(1, 0.8, 1);
+    g.add(knot);
+  }
+  /* 两条红眼 */
+  for (var e=0;e<2;e++){
+    var eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 4), eyeMat);
+    eye.position.set(e?0.13:-0.13, 0.63, 0.38);
+    g.add(eye);
+  }
+  /* 四条根须腿，会随走路摆动 */
+  var legs = [];
+  for (var l=0;l<4;l++){
+    var hip = new THREE.Group();
+    hip.position.set(l<2?0.22:-0.22, 0.3, l%2?0.2:-0.2);
+    var leg = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.42, 5), rootMat);
+    leg.position.y = -0.2;
+    hip.add(leg);
+    g.add(hip);
+    legs.push(hip);
+  }
+  /* 血条：背对镜头的两块小片，始终朝向相机 */
+  var barG = new THREE.Group();
+  barG.position.y = 0.97;
+  var bg = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.095),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color('#160f0c'), transparent: true, opacity: .72, depthWrite: false }));
+  var fill = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.095),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color('#e0705a'), transparent: true, depthWrite: false }));
+  fill.position.z = 0.002;
+  barG.add(bg); barG.add(fill);
+  g.add(barG);
+
+  scene.add(g);
+  return { group: g, mat: mat, body: body, legs: legs, barG: barG, bar: fill };
+}
+
+function spawnMob(){
+  var up = null;
+  for (var t=0;t<10;t++){
+    var axis = new V3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5);
+    axis.addScaledVector(playerUp, -axis.dot(playerUp));
+    if (axis.lengthSq() < 1e-6) continue;
+    axis.normalize();
+    var d = MOB_MIN_D + Math.random() * (MOB_MAX_D - MOB_MIN_D);
+    var cand = stepDir(playerUp, axis, d);
+    if (groundRadiusAt(cand) > 0){ up = cand; break; }
+  }
+  if (!up) return null;
+  var M = buildMob();
+  var m = {
+    group: M.group, mat: M.mat, body: M.body, legs: M.legs, barG: M.barG, bar: M.bar,
+    up: up, r: groundRadiusAt(up), dir: new V3(), hp: MOB_HP, maxHp: MOB_HP,
+    phase: Math.random() * 6.28, atkCd: MOB_ATK_CD, hurt: 0, lunge: 0, dead: 0
+  };
+  m.dir = new V3().crossVectors(m.up, new V3(0, 1, 0));
+  if (m.dir.lengthSq() < 1e-6) m.dir.set(1, 0, 0);
+  m.dir.normalize();
+  mobs.push(m);
+  m.bornD = mobDist(m);
+  m.bornP = playerUp.clone();
+  if (!mobHinted){
+    mobHinted = true;
+    toast('土里拱出来一只根须怪——按 E / 右下动作键揍它。');
+  }
+  return m;
+}
+
+/* 怪物离玩家多远（米，沿球面弧长） */
+function mobDist(m){
+  return Math.acos(clamp(m.up.dot(playerUp), -1, 1)) * PLANET_R;
+}
+function mobInRange(range){
+  for (var i=0;i<mobs.length;i++){
+    if (!mobs[i].dead && mobDist(mobs[i]) < range) return true;
+  }
+  return false;
+}
+function killMob(m, cause){
+  if (m.dead) return;
+  m.dead = 1;
+  m.barG.visible = false;
+  if (cause !== 'down' && cause !== 'test'){
+    state.dust += 3;
+    state.kills = (state.kills || 0) + 1;
+    refreshChips();
+    persist();
+    toast('根须怪散了，捡到 3 星尘。');
+  }
+}
+function clearMobs(cause){
+  for (var i=0;i<mobs.length;i++) killMob(mobs[i], cause || 'down');
+  mobSpawnT = 4.0;
+}
+/* 玩家出手：命中最近的怪，掉血、硬直、击退 */
+function attackNearby(){
+  if (!MOB_ENABLED || ride.on || sunset.active || state.hp <= 0) return false;
+  if (atkCd > 0) return false;
+  var best = null, bd = 1e9;
+  for (var i=0;i<mobs.length;i++){
+    var m = mobs[i];
+    if (m.dead) continue;
+    var d = mobDist(m);
+    if (d < HIT_RANGE && d < bd){ bd = d; best = m; }
+  }
+  if (!best) return false;
+  atkCd = HIT_CD;
+  best.hp -= HIT_DMG;
+  best.hurt = 0.16;
+  best.atkCd = Math.max(best.atkCd, 0.55);
+  best.lunge = 0.22;
+  /* 打退半步，别被贴身咬死 */
+  var away = new V3().crossVectors(playerUp, best.up);
+  if (away.lengthSq() < 1e-6) away.copy(heading);
+  away.normalize();
+  var nudged = stepDir(best.up, away, 0.26);
+  if (groundRadiusAt(nudged) > 0) best.up.copy(nudged);
+  var hitP = best.up.clone().multiplyScalar(best.r + 0.55);
+  spawnSparkle(hitP, best.up, 8, '#ffd0a8');
+  if (best.hp <= 0) killMob(best);
+  return true;
+}
+
+function updateMobs(dt){
+  if (atkCd > 0) atkCd -= dt;
+  if (MOB_ENABLED && !sunset.active && state.hp > 0){
+    mobSpawnT -= dt;
+    if (mobSpawnT <= 0 && mobs.length < MOB_MAX){
+      mobSpawnT = MOB_SPAWN_CD;
+      spawnMob();
+    }
+  }
+  for (var i=mobs.length-1;i>=0;i--){
+    var m = mobs[i];
+    if (m.dead){
+      m.dead += dt * 2.2;
+      var s = Math.max(0.0001, 1 - m.dead);
+      m.group.scale.setScalar(s);
+      m.group.position.y += dt * 0.6;
+      if (m.dead >= 1){ scene.remove(m.group); mobs.splice(i, 1); }
+      continue;
+    }
+    if (m.hurt > 0){
+      m.hurt -= dt;
+      m.mat.emissive.setHex(m.hurt > 0 ? 0xd8553a : 0x000000);
+    }
+    m.atkCd -= dt;
+    if (m.lunge > 0) m.lunge -= dt;
+
+    var d = mobDist(m);
+    var chase = d < MOB_AGGRO && d > MOB_RANGE * 0.9 && !sunset.active && state.hp > 0 && !ride.on;
+    if (!ride.on && state.hp > 0 && d > MOB_RANGE * 0.9 && d < MOB_AGGRO){
+      var toP = new V3().copy(playerUp).addScaledVector(m.up, -playerUp.dot(m.up));
+      if (toP.lengthSq() > 1e-8){
+        toP.normalize();
+        m.dir.lerp(toP, 1 - Math.exp(-6 * dt));
+        if (m.dir.lengthSq() > 1e-8){
+          m.dir.addScaledVector(m.up, -m.dir.dot(m.up));
+          if (m.dir.lengthSq() > 1e-8) m.dir.normalize();
+        }
+        if (chase){
+          m.up.copy(stepDir(m.up, toP, Math.min(MOB_SPEED * dt, Math.max(0, d - MOB_RANGE * 0.85))));
+          m.phase += dt * 7;
+        }
+      }
+      var gr = groundRadiusAt(m.up);
+      m.r = gr > 0 ? gr : PLANET_R - DIG_DEPTH_MAX;
+    } else {
+      m.phase += dt * 1.6;
+    }
+    /* 贴脸咬人 */
+    if (!ride.on && state.hp > 0 && d <= MOB_RANGE && m.atkCd <= 0){
+      m.atkCd = MOB_ATK_CD;
+      m.lunge = 0.3;
+      var mouth = m.up.clone().multiplyScalar(m.r + 0.4);
+      spawnSparkle(mouth, m.up, 10, '#ff8a6a');
+      hurtPlayer(MOB_DMG, 'mob');
+    }
+    /* 摆姿态 */
+    var p = m.up.clone().multiplyScalar(m.r);
+    m.group.position.copy(p);
+    var mx = new V3().crossVectors(m.up, m.dir);
+    mx.normalize();
+    if (mx.lengthSq() > 1e-8){
+      tmpM1.makeBasis(mx, m.up, m.dir);
+      m.group.quaternion.setFromRotationMatrix(tmpM1);
+    }
+    m.body.position.y = 0.56 + Math.sin(m.phase) * 0.03;
+    m.body.rotation.z = Math.sin(m.phase * 0.5) * 0.06;
+    for (var l=0;l<4;l++){
+      m.legs[l].rotation.x = Math.sin(m.phase + l * 1.6) * 0.32;
+    }
+    m.group.position.addScaledVector(m.up, Math.sin(m.phase * 0.5) * 0.02 + (m.lunge > 0 ? 0.05 : 0));
+    /* 血条：朝向相机、按血量缩 */
+    if (m.barG){
+      m.barG.visible = d < 26;
+      m.barG.quaternion.copy(m.group.quaternion).invert().multiply(camera.quaternion);
+      m.bar.scale.x = Math.max(0.001, m.hp / m.maxHp);
+      m.bar.position.x = -(1 - m.hp / m.maxHp) * 0.43;
+    }
+    if (m.hurt <= 0 && m.mat.emissive.getHex() !== 0x000000) m.mat.emissive.setHex(0x000000);
+  }
+}
+
 function updatePlanet(dt){
   var ix = 0, iy = 0;
   if (keys.KeyW || keys.ArrowUp) iy += 1;
@@ -5981,6 +6215,8 @@ function updatePlanet(dt){
 
   /* 生存循环：口渴线性下降、干了掉血、体力回复。骑羊时也照走 */
   tickVitals(dt, moving);
+  /* 怪物刷新 / 追击 / 咬人 */
+  updateMobs(dt);
 
   /* 镜头基准平行运输，永不翻转。
      prevUp 与 playerUp 接近对跖（挖穿瞬移）时 setFromUnitVectors 轴不唯一，
@@ -6137,16 +6373,21 @@ function updatePlanet(dt){
     }
   }
 
-  /* 交互探测 */
+  /* 交互探测：身边有怪时动作键先变成「攻击」 */
   var n = ride.on ? null : findNear();
-  nearTarget = n;
-  var actKey = ride.on ? 'ride' : (n ? n.type + '|' + n.label : '');
+  var mobNear = !ride.on && MOB_ENABLED && mobInRange(HIT_RANGE);
+  nearTarget = mobNear ? null : n;
+  var actKey = ride.on ? 'ride' : (mobNear ? 'mob|攻击' : (n ? n.type + '|' + n.label : ''));
   if (actKey !== _actKey){
     _actKey = actKey;
     if (ride.on){
       actBtn.classList.add('on');
       actLabel.textContent = '下来';
       setActIcon('ride');
+    } else if (mobNear){
+      actBtn.classList.add('on');
+      actLabel.textContent = '攻击';
+      setActIcon('hit');
     } else if (n){
       actBtn.classList.add('on');
       actLabel.textContent = n.label;
@@ -6392,8 +6633,40 @@ if (/[?&]dbg=1/.test(location.search)){
         refreshVitals();
       }
       return { hp: +state.hp.toFixed(2), thirst: +state.thirst.toFixed(2),
-               stam: +state.stam.toFixed(2), water: state.water };
+               stam: +state.stam.toFixed(2), water: state.water, kills: state.kills|0 };
     },
+    /* 战斗：读怪、强制刷怪、手动出手 */
+    mobs: function(){
+      return mobs.map(function(m){
+        return { up: m.up.toArray(), hp: +m.hp.toFixed(1), maxHp: m.maxHp,
+                 d: +mobDist(m).toFixed(2), bornD: +(m.bornD || 0).toFixed(2),
+                 playerMoved: +(m.bornP ? Math.acos(clamp(m.bornP.dot(playerUp), -1, 1)) * PLANET_R : 0).toFixed(2),
+                 dead: !!m.dead };
+      });
+    },
+    mobConst: function(){
+      return { max: MOB_MAX, hp: MOB_HP, dmg: MOB_DMG, atkCd: MOB_ATK_CD, range: MOB_RANGE,
+               speed: MOB_SPEED, aggro: MOB_AGGRO, spawnCd: MOB_SPAWN_CD,
+               hitDmg: HIT_DMG, hitRange: HIT_RANGE, hitCd: HIT_CD };
+    },
+    mobsOff: function(){ MOB_ENABLED = false; clearMobs('test'); return true; },
+    mobsOn: function(){ MOB_ENABLED = true; return true; },
+    /* 把一只怪放到玩家正前方 dist 米处 */
+    mobAt: function(dist){
+      MOB_ENABLED = true;
+      mobSpawnT = 30;   /* 测试时避免自然刷新混进来 */
+      var m = spawnMob();
+      if (!m) return null;
+      var f = heading.clone().addScaledVector(playerUp, -heading.dot(playerUp));
+      if (f.lengthSq() < 1e-8) f.set(1, 0, 0);
+      f.normalize();
+      m.up.copy(stepDir(playerUp, f, dist));
+      m.r = Math.max(groundRadiusAt(m.up), PLANET_R - DIG_DEPTH_MAX);
+      m.group.position.copy(m.up.clone().multiplyScalar(m.r));
+      m.atkCd = MOB_ATK_CD;
+      return { d: +mobDist(m).toFixed(2), hp: m.hp };
+    },
+    hit: function(){ return attackNearby(); },
     drink: function(){ return drinkFlask(); },
     hurt: function(a){ hurtPlayer(a, 'test'); return +state.hp.toFixed(2); },
     vitConst: function(){
