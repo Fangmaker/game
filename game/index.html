@@ -64,7 +64,7 @@
   /* ---------- 任务 ---------- */
   #quests{
     position:fixed;left:calc(env(safe-area-inset-left,0px) + 14px);
-    top:calc(env(safe-area-inset-top,0px) + 76px);
+    top:calc(env(safe-area-inset-top,0px) + 96px);
     width:168px;display:flex;flex-direction:column;gap:5px;z-index:5;pointer-events:none;
   }
   .q{
@@ -347,7 +347,7 @@
     #act{width:64px;height:64px}
     #tools{bottom:calc(env(safe-area-inset-bottom,0px) + 100px)}
     .tool{width:50px;height:50px}
-    #quests{top:calc(env(safe-area-inset-top,0px) + 68px);gap:3px}
+    #quests{top:calc(env(safe-area-inset-top,0px) + 88px);gap:3px}
     .q{font-size:10.5px}
   }
 </style>
@@ -1154,6 +1154,25 @@ function rebuildOverlay(){
   overGeo.computeBoundingSphere();
 }
 
+/* 地表“面片”的真实半径：球面换成三角面后，面片比 PLANET_R 低一点点，
+   玫瑰/花园要是按 PLANET_R 摆就会浮空，所以直接对着地形打一条射线量。 */
+var _surfRay = new THREE.Raycaster();
+function surfaceRadiusAt(dir){
+  _surfRay.set(dir.clone().multiplyScalar(PLANET_R + 2.5), dir.clone().negate());
+  _surfRay.near = 0; _surfRay.far = 4.2;
+  var hs = _surfRay.intersectObjects([baseMesh, overMesh], false);
+  if (hs.length) return PLANET_R + 2.5 - hs[0].distance;
+  var g = groundRadiusAt(dir);
+  return g > 0 ? g : PLANET_R;
+}
+var plantedProps = [];
+function reseatPlanted(){
+  for (var i=0;i<plantedProps.length;i++){
+    var pp = plantedProps[i];
+    pp.obj.position.copy(pp.dir).multiplyScalar(surfaceRadiusAt(pp.dir) + pp.offset);
+  }
+}
+
 var _lastTile = -1, _lastTileDir = new V3(0,0,1);
 function findTile(dir){
   if (_lastTile >= 0 && _lastTileDir.dot(dir) > 0.9998) return _lastTile;
@@ -1594,6 +1613,9 @@ var roseLight = null;
 
   roseGroup.scale.setScalar(1.6);
   standOn(roseGroup, ROSE_DIR, -0.02, 0.6);
+  /* 按三角面片的真实高度落座，否则面片比球面低会浮空 */
+  roseGroup.position.copy(ROSE_DIR).multiplyScalar(surfaceRadiusAt(ROSE_DIR) - 0.02);
+  plantedProps.push({ obj: roseGroup, dir: ROSE_DIR, offset: -0.02 });
   scene.add(roseGroup);
 })();
 
@@ -1623,7 +1645,10 @@ var gardenFlowers = [];
     g.add(petals);
     g.scale.setScalar(0.0001);
     g.visible = false;
-    standOn(g, dirNear(ROSE_DIR, dx, dz), -0.01, Math.random()*6.28);
+    var gd = dirNear(ROSE_DIR, dx, dz);
+    standOn(g, gd, -0.01, Math.random()*6.28);
+    g.position.copy(gd).multiplyScalar(surfaceRadiusAt(gd) - 0.01);
+    plantedProps.push({ obj: g, dir: gd, offset: -0.01 });
     scene.add(g);
     gardenFlowers.push({ group: g, open: 0, target: 0 });
   }
@@ -3584,6 +3609,7 @@ function spawnDigDebris(pos, up, deep){
 }
 
 var _ghostPos = new THREE.Float32BufferAttribute([0,0,0, 0,0,0, 0,0,0], 3);
+var _ghostMid = new V3();
 var ghost = new THREE.Mesh(
   new THREE.BufferGeometry().setAttribute('position', _ghostPos),
   new THREE.MeshBasicMaterial({
@@ -3626,6 +3652,10 @@ function updateGhost(){
     rG = (T.removed ? PLANET_R - DIG_DEPTH : PLANET_R + T.h + DIG_STEP) + 0.02;
   }
   var A = tileVerts[T.v[0]], B = tileVerts[T.v[1]], C = tileVerts[T.v[2]];
+  /* 站在坑里时，这块瓦片预览会悬在头顶、糊在镜头上，像一片半透明三角墙戳向天空 */
+  if (rG - playerR > 0.8){ ghost.visible = false; return; }
+  _ghostMid.set((A.x+B.x+C.x)*rG/3, (A.y+B.y+C.y)*rG/3, (A.z+B.z+C.z)*rG/3);
+  if (camera.position.distanceTo(_ghostMid) < 1.9){ ghost.visible = false; return; }
   _ghostPos.setXYZ(0, A.x*rG, A.y*rG, A.z*rG);
   _ghostPos.setXYZ(1, B.x*rG, B.y*rG, B.z*rG);
   _ghostPos.setXYZ(2, C.x*rG, C.y*rG, C.z*rG);
@@ -4159,6 +4189,7 @@ var NET = {
   on: false, ws: null, connected: false, room: '', server: '',
   peerId: '', retry: 0, retryTimer: null, acc: 0, lastMsg: 0, pingAt: 0, lastSend: 0,
   full: false, digSeq: 0, joinedOnce: false, uiCount: -1,
+  openTimer: null, failReason: '', mixed: false, everConnected: false, failShown: '',
   lastU: new V3(), lastF: new V3(), lastR: -1, lastMv: -1,
   lastCh: '', lastOf: '', lastRd: null, lastDg: -1
 };
@@ -4197,6 +4228,12 @@ function netLiveCount(){
   Object.keys(netRemotes).forEach(function(k){ if (!netRemotes[k].fading) n++; });
   return n;
 }
+/* 连不上时说人话：https 混用 ws://、GitHub Pages、普通超时分别提示 */
+function netFailHint(){
+  if (NET.mixed) return '页面是 https，浏览器会拦掉 ws://，请填 wss:// 或改用本机 http 打开';
+  if (/(^|\.)github\.io$/i.test(location.hostname)) return 'GitHub Pages 只有静态页，连不上 18201 端口；先在电脑上跑 net/roomserver.py，再填它的地址';
+  return '5 秒没连上，检查 net/roomserver.py 是否在跑、地址和 18201 端口是否通';
+}
 function netUi(){
   if (!netStatusEl) return;
   NET.uiCount = Object.keys(netRemotes).length;
@@ -4209,12 +4246,22 @@ function netUi(){
     netStatusEl.textContent = NET.retry ? ('连接中… 第 ' + NET.retry + ' 次重试') : '连接中…';
     netStatusEl.className = 'warn';
     netBtnEl.classList.remove('live');
+  } else if (NET.failReason){
+    netStatusEl.textContent = '未连上 · 单机模式 · ' + NET.failReason;
+    netStatusEl.className = 'warn';
+    netBtnEl.classList.remove('live');
+    /* 连接时面板会自动收起，失败必须主动弹回来，否则用户只看到游戏画面、不知道没连上 */
+    if (NET.failShown !== NET.failReason){
+      NET.failShown = NET.failReason;
+      toast('未连上，先单机玩。');
+      netEl.classList.add('on');
+    }
   } else {
     netStatusEl.textContent = '未连接 · 单机游玩不受影响';
     netStatusEl.className = '';
     netBtnEl.classList.remove('live');
   }
-  netGoEl.textContent = NET.on ? '断 开' : '连 接';
+  netGoEl.textContent = NET.on ? '断 开' : (NET.failReason ? '重 试' : '连 接');
   netGoEl.classList.toggle('danger', NET.on);
 }
 
@@ -4446,17 +4493,26 @@ function netConnect(){
   var room = (netRoomEl.value || '').trim();
   if (!room){ toast('先给房间起个名字。'); netRoomEl.focus(); return; }
   NET.room = room;
+  NET.mixed = (location.protocol === 'https:' && /^ws:\/\//i.test((netServerEl.value || '').trim()));
   NET.server = normalizeServer(netServerEl.value);
   netServerEl.value = NET.server;
   try { localStorage.setItem('b612.net.v1', JSON.stringify({ room: room, server: NET.server })); } catch(e){}
-  NET.on = true; NET.retry = 0;
+  NET.on = true; NET.retry = 0; NET.failReason = ''; NET.everConnected = false; NET.failShown = '';
   if (NET.retryTimer){ clearTimeout(NET.retryTimer); NET.retryTimer = null; }
   netEl.classList.remove('on');
+  if (NET.mixed){
+    NET.on = false;
+    NET.failReason = netFailHint();
+    netUi();
+    return;
+  }
   netUi();
   netOpen();
 }
 function netDisconnect(){
   NET.on = false;
+  NET.failReason = '';
+  if (NET.openTimer){ clearTimeout(NET.openTimer); NET.openTimer = null; }
   if (NET.retryTimer){ clearTimeout(NET.retryTimer); NET.retryTimer = null; }
   var ws = NET.ws;
   NET.ws = null; NET.connected = false;
@@ -4469,6 +4525,12 @@ function netDisconnect(){
 }
 function netRetryLater(){
   if (!NET.on || NET.retryTimer) return;
+  if (NET.retry >= 4){
+    NET.on = false;
+    NET.failReason = netFailHint();
+    netUi();
+    return;
+  }
   var delay = Math.min(3000, 250 * Math.pow(1.6, Math.min(NET.retry, 6)));
   NET.retry++;
   netUi();
@@ -4484,12 +4546,29 @@ function netOpen(){
     url = new URL(NET.server);
     url.searchParams.set('room', NET.room);
     url.searchParams.set('name', state.char);
-  } catch(e){ netRetryLater(); return; }
+  } catch(e){
+    NET.on = false; NET.failReason = '服务器地址不对，检查一下填的地址'; netUi(); return;
+  }
   var ws;
-  try { ws = new WebSocket(url.toString()); } catch(e){ netRetryLater(); return; }
+  try { ws = new WebSocket(url.toString()); } catch(e){
+    NET.on = false; NET.failReason = netFailHint(); netUi(); return;
+  }
   NET.ws = ws; NET.connected = false; NET.acc = 0; NET.full = true;
+  if (NET.openTimer){ clearTimeout(NET.openTimer); NET.openTimer = null; }
+  NET.openTimer = setTimeout(function(){
+    NET.openTimer = null;
+    if (NET.ws !== ws || NET.connected) return;
+    try { ws.onopen = ws.onclose = ws.onerror = null; ws.close(); } catch(e){}
+    NET.ws = null; NET.connected = false;
+    if (NET.retryTimer){ clearTimeout(NET.retryTimer); NET.retryTimer = null; }
+    NET.on = false;
+    NET.failReason = netFailHint();
+    netFadeAll();
+    netUi();
+  }, 5000);
   ws.onopen = function(){
     if (NET.ws !== ws) return;
+    if (NET.openTimer){ clearTimeout(NET.openTimer); NET.openTimer = null; }
     NET.retry = 0;
     NET.lastMsg = performance.now();
     NET.pingAt = performance.now();
@@ -4503,6 +4582,8 @@ function netOpen(){
     try { m = JSON.parse(ev.data); } catch(e){ return; }
     if (m.t === 'welcome'){
       NET.connected = true;
+      NET.everConnected = true;
+      NET.failReason = '';
       NET.peerId = m.id;
       netSend(true);
       netUi();
@@ -4521,10 +4602,17 @@ function netOpen(){
   };
   ws.onclose = function(){
     if (NET.ws !== ws) return;
+    if (NET.openTimer){ clearTimeout(NET.openTimer); NET.openTimer = null; }
     NET.ws = null; NET.connected = false;
     netFadeAll();
-    netUi();
-    netRetryLater();
+    if (NET.everConnected){
+      netUi();
+      netRetryLater();
+    } else {
+      NET.on = false;
+      NET.failReason = netFailHint();
+      netUi();
+    }
   };
   ws.onerror = function(){ try { ws.close(); } catch(e){} };
 }
@@ -5694,6 +5782,7 @@ function tick(){
     rebuildBase();
     rebuildOverlay();
     updateTufts();
+    reseatPlanted();
     terrainDirty = false;
   }
 
