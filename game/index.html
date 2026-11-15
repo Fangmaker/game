@@ -746,7 +746,7 @@ var starMat;
   var g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   starMat = new THREE.PointsMaterial({
-    size: 2.9, map: starTex, transparent: true, opacity: .9,
+    size: 2.9, map: starTex, transparent: true, opacity: .9, fog: false,
     depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: false,
     color: new THREE.Color('#cfe0ff')
   });
@@ -757,14 +757,14 @@ var starMat;
 
 /* 太阳 */
 var sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({
-  map: glowTex, color: new THREE.Color('#ffd9a6'),
+  map: glowTex, color: new THREE.Color('#ffd9a6'), fog: false,
   transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
 }));
 sunSprite.scale.set(150, 150, 1);
 sunSprite.renderOrder = -8;
 scene.add(sunSprite);
 var sunHalo = new THREE.Sprite(new THREE.SpriteMaterial({
-  map: glowTex, color: new THREE.Color('#ffb070'),
+  map: glowTex, color: new THREE.Color('#ffb070'), fog: false,
   transparent: true, opacity: .35, blending: THREE.AdditiveBlending, depthWrite: false
 }));
 sunHalo.scale.set(420, 420, 1);
@@ -784,6 +784,9 @@ scene.add(fillLight);
 var playerLight = new THREE.PointLight(new THREE.Color('#ffe6c4'), 0.85, 9, 1.6);
 scene.add(playerLight);
 
+/* 大气雾：只作用在地形/道具上，远处山脊压成低饱和蓝灰，做出《光遇》式的层次 */
+scene.fog = new THREE.FogExp2(new THREE.Color('#24314b'), 0.020);
+
 /* ---------------------------------------------------------------- 小行星 */
 /* ---------------------------------------------------------------- 地形：球面瓦片高度场 */
 var TILE_DETAIL = 20;
@@ -802,6 +805,38 @@ var baseMesh, baseGeo, overMesh, overGeo, coreMesh;
 function vhash(a, b, c){
   var s = Math.sin(a*127.1 + b*311.7 + c*74.7) * 43758.5453;
   return s - Math.floor(s);
+}
+
+/* 平滑值噪声：低频连续，避免逐面高对比色块 */
+function snoise3(x, y, z){
+  var xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+  var xf = x - xi, yf = y - yi, zf = z - zi;
+  var u = xf*xf*(3 - 2*xf), v = yf*yf*(3 - 2*yf), w = zf*zf*(3 - 2*zf);
+  var h = function(i, j, k){ return hash(xi+i, yi+j, zi+k); };
+  var x00 = h(0,0,0) + (h(1,0,0) - h(0,0,0)) * u;
+  var x10 = h(0,1,0) + (h(1,1,0) - h(0,1,0)) * u;
+  var x01 = h(0,0,1) + (h(1,0,1) - h(0,0,1)) * u;
+  var x11 = h(0,1,1) + (h(1,1,1) - h(0,1,1)) * u;
+  var y0 = x00 + (x10 - x00) * v;
+  var y1 = x01 + (x11 - x01) * v;
+  return y0 + (y1 - y0) * w;
+}
+
+/* 统一地表色板：低饱和暖沙，只有绿洲/火山灰两块低对比度的变化 */
+var _gSand = new THREE.Color('#cfba96');
+var _gPale = new THREE.Color('#e2d4ba');
+var _gDark = new THREE.Color('#b39c7c');
+var _gMoss = new THREE.Color('#94a180');
+var _gAsh  = new THREE.Color('#8a8076');
+function groundColorAt(d, out){
+  var n1 = snoise3(d.x*2.4 + 9.1, d.y*2.4, d.z*2.4);
+  var n2 = snoise3(d.x*6.2, d.y*6.2 + 3.7, d.z*6.2);
+  var n3 = snoise3(d.x*13.0, d.y*13.0, d.z*13.0 + 5.2);
+  out.copy(_gSand).lerp(_gPale, clamp(n1*1.15, 0, 1)*0.75);
+  out.lerp(_gDark, clamp((n2 - 0.45)*1.6, 0, 1)*0.30);
+  out.lerp(_gMoss, sstep(0.52, 0.96, d.dot(OASIS_DIR))*0.62);
+  out.lerp(_gAsh,  sstep(0.55, 0.97, d.dot(ASH_DIR))*0.78);
+  return out.multiplyScalar(0.965 + n3*0.07);
 }
 
 function buildTiles(){
@@ -830,31 +865,13 @@ function buildTiles(){
   }
   geo.dispose();
 
-  var cSand  = new THREE.Color('#d8b481');
-  var cSand2 = new THREE.Color('#c6a068');
-  var cLight = new THREE.Color('#e6c995');
-  var cRock  = new THREE.Color('#ab8452');
-  var cMoss  = new THREE.Color('#849a64');
-  var cAsh   = new THREE.Color('#6f5f57');
   var tmp = new THREE.Color();
   var cd = new V3();
 
   for (var i=0;i<raw.length;i++){
     var A = tileVerts[raw[i][0]], B = tileVerts[raw[i][1]], C = tileVerts[raw[i][2]];
     cd.copy(A).add(B).add(C).normalize();
-    var mossF = sstep(0.34, 0.94, cd.dot(OASIS_DIR));
-    var ashF  = sstep(0.40, 0.92, cd.dot(ASH_DIR));
-    var n1 = hash(cd.x*1.7, cd.y*1.7, cd.z*1.7);
-    var n2 = hash(cd.x*0.9+11.0, cd.y*0.9, cd.z*0.9);
-    var n3 = hash(cd.x*4.1, cd.y*4.1+7.0, cd.z*4.1);
-    if (n2 > 0.9) tmp.copy(cMoss).lerp(cLight, 0.3);
-    else if (n1 > 0.7) tmp.copy(cLight);
-    else if (n1 < 0.22) tmp.copy(cRock);
-    else tmp.copy(cSand).lerp(cSand2, n1);
-    tmp.lerp(cMoss, mossF*0.75);
-    tmp.lerp(cAsh, ashF*0.8);
-    var v = 0.94 + n3*0.12;
-    tmp.multiplyScalar(v);
+    groundColorAt(cd, tmp);
     tiles.push({ v: raw[i], c: cd.clone(), col: tmp.clone(), h: 0, removed: false, nbr: [-1,-1,-1] });
   }
 
@@ -879,8 +896,8 @@ function buildTiles(){
     }
   }
 
-  /* 双面：挖穿之后能从洞里看见星球另一侧的内壁 */
-  var mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, flatShading: true, side: THREE.DoubleSide });
+  /* 双面：挖穿之后能从洞里看见星球另一侧的内壁。地表改平滑着色，不再一块块三角面 */
+  var mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, flatShading: false, side: THREE.DoubleSide });
   baseGeo = new THREE.BufferGeometry();
   baseGeo.setAttribute('position', new THREE.Float32BufferAttribute([], 3));
   baseGeo.setAttribute('color', new THREE.Float32BufferAttribute([], 3));
@@ -994,7 +1011,10 @@ function rebuildBase(){
     var inA = snapToCraterRim(_tA), inB = snapToCraterRim(_tB), inC = snapToCraterRim(_tC);
     if (inA && inB && inC) return;         /* 整块都在圆口里：不铺地面，露出坑壁 */
     p.push(_tA.x*R, _tA.y*R, _tA.z*R, _tB.x*R, _tB.y*R, _tB.z*R, _tC.x*R, _tC.y*R, _tC.z*R);
-    c.push(_sc.r, _sc.g, _sc.b, _sc.r, _sc.g, _sc.b, _sc.r, _sc.g, _sc.b);
+    /* 每个顶点自己算色：相邻三角形共用同一方向 → 颜色连续，没有拼贴接缝 */
+    groundColorAt(_tA, _sc); c.push(_sc.r, _sc.g, _sc.b);
+    groundColorAt(_tB, _sc); c.push(_sc.r, _sc.g, _sc.b);
+    groundColorAt(_tC, _sc); c.push(_sc.r, _sc.g, _sc.b);
   }
   /* 坑口附近自适应细分：细分到 0.17 单位再贴沿，口沿才是一个圆而不是几个长直边 */
   /* A/B/C 是单位方向，边长按弧度算：0.17 / R ≈ 0.011 */
@@ -1012,12 +1032,17 @@ function rebuildBase(){
   for (var i=0;i<tiles.length;i++){
     var T = tiles[i];
     if (T.removed || T.h !== 0) continue;
-    _sc.copy(T.col);
     splitTri(tileVerts[T.v[0]], tileVerts[T.v[1]], tileVerts[T.v[2]], 0);
   }
   baseGeo.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
   baseGeo.setAttribute('color', new THREE.Float32BufferAttribute(c, 3));
-  baseGeo.computeVertexNormals();
+  /* 法线直接取球面径向：整颗星球平滑受光，不再按三角形切面明暗 */
+  var nrm = new Float32Array(p.length);
+  for (var ni=0; ni<p.length; ni+=3){
+    var _l = Math.sqrt(p[ni]*p[ni] + p[ni+1]*p[ni+1] + p[ni+2]*p[ni+2]) || 1;
+    nrm[ni] = p[ni]/_l; nrm[ni+1] = p[ni+1]/_l; nrm[ni+2] = p[ni+2]/_l;
+  }
+  baseGeo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   baseGeo.computeBoundingSphere();
 }
 
@@ -1578,18 +1603,27 @@ var beaconLanternMat;
 
   /* 向上的光柱：远距离可见，用来找回家 */
   var beam = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.55, 1.15, 13, 10, 1, true),
+    new THREE.CylinderGeometry(0.55, 1.15, 13, 12, 1, true),
     new THREE.ShaderMaterial({
       uniforms: { uColor: { value: new THREE.Color('#ffcf8a') } },
       transparent: true, depthWrite: false, side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
       vertexShader: [
-        'varying float vY;',
-        'void main(){ vY = uv.y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }'
+        'varying float vY; varying float vX; varying float vF;',
+        'void main(){',
+        '  vY = uv.y; vX = uv.x;',
+        '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
+        '  vF = abs(dot(normalize(normalMatrix * normal), normalize(-mv.xyz)));',
+        '  gl_Position = projectionMatrix * mv;',
+        '}'
       ].join('\n'),
       fragmentShader: [
-        'uniform vec3 uColor; varying float vY;',
-        'void main(){ float a = pow(1.0 - vY, 1.7) * 0.26; gl_FragColor = vec4(uColor, a); }'
+        'uniform vec3 uColor; varying float vY; varying float vX; varying float vF;',
+        'void main(){',
+        '  float a = pow(1.0 - vY, 1.45) * pow(vF, 0.75) * 0.34;',
+        '  a *= 0.74 + 0.26 * sin(vX * 6.2831 * 3.0 + vY * 4.0);',
+        '  gl_FragColor = vec4(uColor, a);',
+        '}'
       ].join('\n')
     })
   );
@@ -1597,16 +1631,72 @@ var beaconLanternMat;
   beam.renderOrder = 3;
   beacon.add(beam);
 
+  /* 会扫动的横向光束：像真的灯塔，光在雾里慢慢掠过地面 */
+  var sweepPivot = new THREE.Group();
+  sweepPivot.position.y = 3.5;
+  beacon.add(sweepPivot);
+  var sweepMat = new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color('#ffc987') } },
+    transparent: true, depthWrite: false, side: THREE.FrontSide,
+    blending: THREE.AdditiveBlending,
+    vertexShader: [
+      'varying float vLen;',
+      'void main(){ vLen = uv.y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }'
+    ].join('\n'),
+    fragmentShader: [
+      'uniform vec3 uColor; varying float vLen;',
+      'void main(){',
+      '  float a = pow(vLen, 1.8) * 0.13;',
+      '  gl_FragColor = vec4(uColor, a);',
+      '}'
+    ].join('\n')
+  });
+  var sweepGeo = new THREE.ConeGeometry(0.62, 7.6, 12, 1, true);
+  sweepGeo.translate(0, -3.8, 0);
+  sweepGeo.rotateZ(-Math.PI/2);      /* 锥尖留在灯上，锥体朝外 */
+  var sweep = new THREE.Mesh(sweepGeo, sweepMat);
+  sweepPivot.add(sweep);
+  var sweep2 = new THREE.Mesh(sweepGeo, sweepMat.clone());
+  sweep2.material.uniforms.uColor.value = new THREE.Color('#ffdca8');
+  sweep2.rotation.y = Math.PI;
+  sweepPivot.add(sweep2);
+  sweepPivot.rotation.y = 0.6;
+  sweepPivot.renderOrder = 3;
+  beacon.userData.sweep = sweepPivot;
+
+  /* 灯下的地面光斑：告诉玩家灯照到哪里 */
+  var pool = new THREE.Mesh(
+    new THREE.CircleGeometry(4.6, 28),
+    new THREE.MeshBasicMaterial({
+      map: glowTex, color: new THREE.Color('#ffbe78'), transparent: true,
+      opacity: .26, blending: THREE.AdditiveBlending, depthWrite: false, fog: false
+    })
+  );
+  pool.rotation.x = -Math.PI/2;
+  pool.position.y = 0.07;
+  pool.renderOrder = 2;
+  beacon.add(pool);
+  beacon.userData.pool = pool;
+
   var halo = new THREE.Sprite(new THREE.SpriteMaterial({
     map: glowTex, color: new THREE.Color('#ffcf8a'), transparent: true,
-    opacity: .55, blending: THREE.AdditiveBlending, depthWrite: false
+    opacity: .55, blending: THREE.AdditiveBlending, depthWrite: false, fog: false
   }));
-  halo.scale.set(2.6, 2.6, 1);
+  halo.scale.set(2.0, 2.0, 1);
   halo.position.y = 3.5;
   beacon.add(halo);
   beacon.userData.halo = halo;
 
-  var warm = new THREE.PointLight(new THREE.Color('#ffbd72'), 3.0, 16, 2);
+  var halo2 = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTex, color: new THREE.Color('#ffb970'), transparent: true,
+    opacity: .16, blending: THREE.AdditiveBlending, depthWrite: false, fog: false
+  }));
+  halo2.scale.set(5.2, 5.2, 1);
+  halo2.position.y = 3.5;
+  beacon.add(halo2);
+  beacon.userData.halo2 = halo2;
+
+  var warm = new THREE.PointLight(new THREE.Color('#ffbd72'), 2.6, 18, 2);
   warm.position.y = 3.5;
   beacon.add(warm);
 
@@ -1779,29 +1869,92 @@ var ledge = new THREE.Group();
 })();
 
 /* ---------------------------------------------------------------- 水井（家） / 绿洲水塘 */
+var wellWaterMat = null, pondWaterMat = null, pondGlow = null, pondFlies = [];
+function stoneMat(c){ return new THREE.MeshStandardMaterial({ color: new THREE.Color(c), roughness: 1, flatShading: true }); }
+
 function makeWell(dir){
   var g = new THREE.Group();
-  var stone = new THREE.MeshStandardMaterial({ color: new THREE.Color('#a3968a'), roughness: 1, flatShading: true });
-  var wood = new THREE.MeshStandardMaterial({ color: new THREE.Color('#8a6a4e'), roughness: 1, flatShading: true });
-  var body = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.46, 0.42, 9, 1, true), stone);
-  body.position.y = 0.21;
-  body.material.side = THREE.DoubleSide;
-  g.add(body);
-  var water = new THREE.Mesh(new THREE.CircleGeometry(0.38, 12), new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#3f6f96'), emissive: new THREE.Color('#1b3550'), roughness: .25, metalness: .1
-  }));
+  var sA = stoneMat('#958b7e'), sB = stoneMat('#a99e8e'), sC = stoneMat('#b6aa98');
+  var moss = stoneMat('#7c8a6a');
+  var wood = new THREE.MeshStandardMaterial({ color: new THREE.Color('#7f6048'), roughness: 1, flatShading: true });
+  var woodD = new THREE.MeshStandardMaterial({ color: new THREE.Color('#654c39'), roughness: 1, flatShading: true });
+
+  /* 井筒：从井口往下 1 个单位，内壁可见 */
+  var bore = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.40, 1.0, 14, 1, true), sA);
+  bore.material.side = THREE.DoubleSide;
+  bore.position.y = -0.03;
+  g.add(bore);
+  var bottom = new THREE.Mesh(new THREE.CircleGeometry(0.36, 14),
+    new THREE.MeshStandardMaterial({ color: new THREE.Color('#241c14'), roughness: 1 }));
+  bottom.rotation.x = -Math.PI/2;
+  bottom.position.y = -0.50;
+  g.add(bottom);
+
+  /* 井水：有微弱的自发光，夜里能看见一点水光 */
+  wellWaterMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color('#3f6a88'), emissive: new THREE.Color('#16324a'),
+    emissiveIntensity: .75, roughness: .16, metalness: .2
+  });
+  var water = new THREE.Mesh(new THREE.CircleGeometry(0.345, 16), wellWaterMat);
   water.rotation.x = -Math.PI/2;
-  water.position.y = 0.26;
+  water.position.y = -0.16;
   g.add(water);
-  for (var i=0;i<2;i++){
-    var post = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.72, 4), wood);
-    post.position.set(i ? 0.34 : -0.34, 0.42, 0);
-    g.add(post);
+
+  /* 井口一圈砌石：大小、角度都略不同，避免“标准圆柱”感 */
+  var rim = [];
+  for (var i=0;i<11;i++){
+    var a = (i/11)*Math.PI*2;
+    var w = 0.17 + (i%3)*0.015, h = 0.085 + (i%2)*0.02, d = 0.13 + (i%4)*0.012;
+    var block = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), [sA, sB, sC][i%3]);
+    block.position.set(Math.cos(a)*0.455, 0.50 + (i%3)*0.006, Math.sin(a)*0.455);
+    block.rotation.y = -a + (i%2 ? 0.07 : -0.05);
+    block.rotation.z = (i%2 ? 0.03 : -0.025);
+    g.add(block);
+    rim.push(block);
   }
-  var bar = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.78, 4), wood);
+  for (var m=0;m<3;m++){
+    var r = rim[(m*4+1)%rim.length];
+    var tuft = new THREE.Mesh(new THREE.SphereGeometry(0.055 + m*0.01, 6, 4), moss);
+    tuft.scale.set(1.5, 0.35, 1.0);
+    tuft.position.copy(r.position).add(new THREE.Vector3(0, 0.045, 0));
+    g.add(tuft);
+  }
+  var curb = new THREE.Mesh(new THREE.TorusGeometry(0.455, 0.032, 6, 20), sB);
+  curb.rotation.x = Math.PI/2;
+  curb.position.y = 0.535;
+  g.add(curb);
+
+  /* 木架：两根柱子 + 横梁 + 绞盘 + 绳子和木桶 */
+  for (var k=0;k<2;k++){
+    var post = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.042, 0.92, 5), wood);
+    post.position.set(k ? 0.45 : -0.45, 0.46, 0);
+    post.rotation.z = k ? -0.02 : 0.02;
+    g.add(post);
+    var brace = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.05, 0.10), woodD);
+    brace.position.set(k ? 0.40 : -0.40, 0.88, 0);
+    g.add(brace);
+  }
+  var bar = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.98, 6), wood);
   bar.rotation.z = Math.PI/2;
-  bar.position.y = 0.76;
+  bar.position.y = 0.90;
   g.add(bar);
+  var winch = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.10, 8), woodD);
+  winch.rotation.z = Math.PI/2;
+  winch.position.set(0.18, 0.90, 0);
+  g.add(winch);
+  var crank = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.22, 4), woodD);
+  crank.position.set(0.26, 0.80, 0);
+  g.add(crank);
+
+  var rope = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.62, 4),
+    new THREE.MeshStandardMaterial({ color: new THREE.Color('#b8a184'), roughness: 1 }));
+  rope.position.set(0.02, 0.60, 0);
+  g.add(rope);
+  var bucket = new THREE.Mesh(new THREE.CylinderGeometry(0.072, 0.06, 0.11, 8, 1, true), woodD);
+  bucket.material.side = THREE.DoubleSide;
+  bucket.position.set(0.02, 0.30, 0);
+  g.add(bucket);
+
   g.scale.setScalar(1.5);
   standOn(g, dir, -0.03, 0.7);
   scene.add(g);
@@ -1811,27 +1964,82 @@ var well = makeWell(dirNear(HOME_DIR, 2.9, -0.5));
 
 var pond = new THREE.Group();
 (function makePond(){
-  var basin = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.35, 0.16, 14), new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#8f9a72'), roughness: 1, flatShading: true
-  }));
-  basin.position.y = 0.02;
-  pond.add(basin);
-  var water = new THREE.Mesh(new THREE.CircleGeometry(1.16, 16), new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#3c7fa4'), emissive: new THREE.Color('#173a56'),
-    emissiveIntensity: .8, roughness: .18, metalness: .15
-  }));
+  /* 池底：浅水色，比水面暗一档，水才有“深度感” */
+  var floor = new THREE.Mesh(new THREE.CircleGeometry(1.30, 24),
+    new THREE.MeshStandardMaterial({ color: new THREE.Color('#6b7f5f'), roughness: 1 }));
+  floor.rotation.x = -Math.PI/2;
+  floor.position.y = 0.055;
+  pond.add(floor);
+
+  pondWaterMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color('#4a7f99'), emissive: new THREE.Color('#1b3a4d'),
+    emissiveIntensity: .62, roughness: .12, metalness: .22
+  });
+  var water = new THREE.Mesh(new THREE.CircleGeometry(1.22, 30), pondWaterMat);
   water.rotation.x = -Math.PI/2;
-  water.position.y = 0.1;
+  water.position.y = 0.10;
   pond.add(water);
-  for (var i=0;i<5;i++){
-    var a = (i/5)*Math.PI*2 + 0.4;
-    var r = new THREE.Mesh(new THREE.DodecahedronGeometry(0.18 + Math.random()*0.1, 0), new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#9a8b78'), roughness: 1, flatShading: true
-    }));
-    r.position.set(Math.cos(a)*1.42, 0.04, Math.sin(a)*1.42);
-    r.rotation.set(Math.random(), Math.random(), Math.random());
-    pond.add(r);
+
+  /* 水面反光：一块跟着视角略偏的柔光，夜里像月亮落在水里 */
+  pondGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTex, color: new THREE.Color('#bfe3ef'), transparent: true,
+    opacity: .14, blending: THREE.AdditiveBlending, depthWrite: false, fog: false
+  }));
+  pondGlow.scale.set(2.3, 1.1, 1);
+  pondGlow.position.set(-0.25, 0.16, -0.15);
+  pond.add(pondGlow);
+
+  /* 池沿一圈石块 */
+  var rockMats = [stoneMat('#8f8578'), stoneMat('#a2968a'), stoneMat('#7d7a70')];
+  for (var i=0;i<14;i++){
+    var a = (i/14)*Math.PI*2 + 0.3;
+    var rr = 1.36 + (i%3)*0.035;
+    var rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.20 + (i%4)*0.028, 0), rockMats[i%3]);
+    rock.position.set(Math.cos(a)*rr, 0.055, Math.sin(a)*rr);
+    rock.rotation.set(i*0.7, i*1.3, i*0.5);
+    rock.scale.set(1.25, 0.62, 0.95);
+    pond.add(rock);
   }
+
+  /* 睡莲叶 */
+  var padMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#6f8a5d'), roughness: .9, side: THREE.DoubleSide });
+  var pads = [[0.55,0.35],[0.15,-0.62],[-0.55,-0.18]];
+  for (var p=0;p<pads.length;p++){
+    var pad = new THREE.Mesh(new THREE.CircleGeometry(0.11 + p*0.02, 10), padMat);
+    pad.rotation.x = -Math.PI/2;
+    pad.rotation.z = p*1.1;
+    pad.position.set(pads[p][0], 0.112, pads[p][1]);
+    pond.add(pad);
+  }
+
+  /* 芦苇 */
+  var reedMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#7d8a62'), roughness: 1, flatShading: true });
+  for (var rd=0;rd<13;rd++){
+    var a2 = (rd/13)*Math.PI*2 + 0.15;
+    var h = 0.30 + (rd%4)*0.07;
+    var reed = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.013, h, 4), reedMat);
+    reed.position.set(Math.cos(a2)*1.27, 0.06 + h/2, Math.sin(a2)*1.27);
+    reed.rotation.z = Math.cos(a2)*0.12;
+    reed.rotation.x = -Math.sin(a2)*0.12;
+    pond.add(reed);
+    if (rd % 3 === 0){
+      var tip = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.02, 0.08, 4), reedMat);
+      tip.position.set(Math.cos(a2)*1.27 - Math.cos(a2)*h*0.12, 0.06 + h + 0.02, Math.sin(a2)*1.27 + Math.sin(a2)*h*0.12);
+      pond.add(tip);
+    }
+  }
+
+  /* 萤火：低饱和黄绿小点，绕水面慢慢飘 */
+  for (var f=0;f<9;f++){
+    var sp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTex, color: new THREE.Color('#dfeaae'), transparent: true,
+      opacity: .55, blending: THREE.AdditiveBlending, depthWrite: false, fog: false
+    }));
+    sp.scale.set(0.16, 0.16, 1);
+    pond.add(sp);
+    pondFlies.push({ sp: sp, ph: f*0.83, r: 0.5 + (f%5)*0.19, h: 0.25 + (f%4)*0.16 });
+  }
+
   standOn(pond, OASIS_DIR, 0.0, 0.5);
   scene.add(pond);
 })();
@@ -6734,9 +6942,23 @@ function updatePlanet(dt){
     }
   }
 
-  /* 灯塔呼吸 */
+  /* 灯塔呼吸：灯光、地面光斑、扫动光束一起做出“灯在转”的感觉 */
   if (beaconLanternMat) beaconLanternMat.emissiveIntensity = 1.4 + Math.sin(elapsed*1.8)*0.25;
   if (beacon.userData.halo) beacon.userData.halo.material.opacity = 0.45 + Math.sin(elapsed*1.8)*0.12;
+  if (beacon.userData.halo2) beacon.userData.halo2.material.opacity = 0.13 + Math.sin(elapsed*1.4 + 1.1)*0.05;
+  if (beacon.userData.pool) beacon.userData.pool.material.opacity = 0.14 + Math.sin(elapsed*1.6)*0.045;
+  if (beacon.userData.sweep) beacon.userData.sweep.rotation.y = elapsed*0.55;
+
+  /* 井水/池水微光 + 池面萤火飘动 */
+  if (wellWaterMat) wellWaterMat.emissiveIntensity = .68 + Math.sin(elapsed*1.3)*.10;
+  if (pondWaterMat) pondWaterMat.emissiveIntensity = .58 + Math.sin(elapsed*1.1)*.09;
+  if (pondGlow) pondGlow.material.opacity = .11 + Math.sin(elapsed*0.8 + 0.6)*.05;
+  for (var pf=0;pf<pondFlies.length;pf++){
+    var F = pondFlies[pf];
+    var fa = elapsed*0.32 + F.ph;
+    F.sp.position.set(Math.cos(fa)*F.r, F.h + Math.sin(elapsed*0.9 + F.ph)*0.09, Math.sin(fa)*F.r);
+    F.sp.material.opacity = 0.35 + (Math.sin(elapsed*1.6 + F.ph*2.0)*0.5 + 0.5)*0.42;
+  }
 
   /* 星光碎片 */
   for (var s=0;s<shards.length;s++){
@@ -6836,6 +7058,7 @@ if (/[?&]dbg=1/.test(location.search)){
     up: function(){ return playerUp.toArray(); },
     r: function(){ return playerR; },
     R: function(){ return PLANET_R; },
+    landmarks: function(){ return { beacon: beacon.position.toArray(), well: well.position.toArray(), pond: pond.position.toArray() }; },
     tileDetail: function(){ return TILE_DETAIL; },
     triCount: function(){ return tiles.length; },
     tile: function(){
@@ -7119,6 +7342,18 @@ if (/[?&]dbg=1/.test(location.search)){
       return out;
     },
     view: function(pitch, yaw, dist){ if (pitch != null) camPitch = clamp(pitch, 0.08, 1.22); if (yaw != null) camYaw = yaw; if (dist) camDist = dist; },
+    face: function(lat, lon){
+      var t = dirFromLatLon(lat, lon);
+      var f = t.clone().addScaledVector(playerUp, -t.dot(playerUp));
+      if (f.lengthSq() < 1e-6) return null;
+      f.normalize();
+      heading.copy(f); camF.copy(f);
+      var side = new V3().crossVectors(playerUp, f).normalize();
+      var m = new THREE.Matrix4().makeBasis(side, playerUp, f);
+      headingQ.setFromRotationMatrix(m);
+      camYaw = 0;
+      return f.toArray();
+    },
     freeCam: function(a, b){
       /* 取证用：把镜头固定在指定位置看向指定点 */
       if (!a){ camFree = false; return; }
