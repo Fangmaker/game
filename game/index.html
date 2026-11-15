@@ -268,7 +268,18 @@
   .tool svg{width:21px;height:21px;display:block}
   .tool em{font-style:normal;font-size:10px;letter-spacing:1.5px;opacity:.86}
   .tool:active{transform:scale(.92);background:radial-gradient(circle at 40% 30%,rgba(232,199,149,.42),rgba(232,199,149,.13));}
-  .tool.off{opacity:.32}
+  /* 变灰：只压图标和文字，别把“原因”小条一起压透明（否则等于没写） */
+  .tool.off{border-color:rgba(232,199,149,.13);background:rgba(16,22,34,.30)}
+  .tool.off svg,.tool.off em{opacity:.30}
+  /* 变灰时必须写清原因，避免“按钮坏了”的误判：一条提示挂在工具组上方 */
+  #toolWhy{
+    display:none;position:absolute;right:0;bottom:calc(100% + 6px);
+    padding:3px 8px;border-radius:6px;white-space:nowrap;
+    font-size:10px;letter-spacing:.6px;color:#f0d7a8;
+    background:rgba(8,12,22,.80);border:1px solid rgba(232,199,149,.22);
+    text-shadow:0 1px 2px rgba(0,0,0,.85);pointer-events:none;
+  }
+  #toolWhy.on{display:block}
   .tool .k{
     position:absolute;top:-6px;left:-4px;
     font-size:9.5px;letter-spacing:.5px;padding:2px 5px;border-radius:4px;
@@ -481,6 +492,7 @@
 <div id="joy"><div id="knob"></div></div>
 
 <div id="tools">
+  <div id="toolWhy"></div>
   <button id="dig" class="tool" aria-label="挖土">
     <span class="k">F</span>
     <svg viewBox="0 0 24 24" fill="none" stroke="#f4ead9" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1054,23 +1066,65 @@ function rebuildOverlay(){
     if (T.removed || T.h === 0) continue;
     var A = tileVerts[T.v[0]], B = tileVerts[T.v[1]], C = tileVerts[T.v[2]];
     var rT = R + T.h;
-    var top = soilColor(T.h);
-    var tr = top.r, tg = top.g, tb = top.b;
-    p.push(A.x*rT, A.y*rT, A.z*rT, B.x*rT, B.y*rT, B.z*rT, C.x*rT, C.y*rT, C.z*rT);
-    c.push(tr,tg,tb, tr,tg,tb, tr,tg,tb);
+    /* 顶面倒角 + 拆分：土堆从侧壁转到顶面不再是一个 90° 硬边，
+       顶面也不再是“一整块大三角”，贴近看不会整屏一块土色面片 */
+    var lip = Math.min(0.10, Math.max(0.028, T.h * 0.09));
+    var rLip = rT - lip;
+    var topC = soilColor(T.h), lipC = soilColor(T.h - lip);
+    var cen = new V3().copy(A).add(B).add(C).normalize();
+    var iA = new V3().copy(A).lerp(cen, 0.17).normalize();
+    var iB = new V3().copy(B).lerp(cen, 0.17).normalize();
+    var iC = new V3().copy(C).lerp(cen, 0.17).normalize();
+    var gTop = 0.95 + 0.10*vhash(i * 0.37, T.h * 2.3, 5.9);
+    var gLip = 0.90 + 0.14*vhash(i * 0.71, T.h * 1.7, 2.3);
+    (function(tr, tg, tb, lr, lg, lb){
+      /* 倒角环 */
+      p.push(A.x*rLip, A.y*rLip, A.z*rLip, B.x*rLip, B.y*rLip, B.z*rLip, iB.x*rT, iB.y*rT, iB.z*rT);
+      c.push(lr,lg,lb, lr,lg,lb, lr,lg,lb);
+      p.push(A.x*rLip, A.y*rLip, A.z*rLip, iB.x*rT, iB.y*rT, iB.z*rT, iA.x*rT, iA.y*rT, iA.z*rT);
+      c.push(lr,lg,lb, lr,lg,lb, lr,lg,lb);
+      p.push(B.x*rLip, B.y*rLip, B.z*rLip, C.x*rLip, C.y*rLip, C.z*rLip, iC.x*rT, iC.y*rT, iC.z*rT);
+      c.push(lr,lg,lb, lr,lg,lb, lr,lg,lb);
+      p.push(B.x*rLip, B.y*rLip, B.z*rLip, iC.x*rT, iC.y*rT, iC.z*rT, iB.x*rT, iB.y*rT, iB.z*rT);
+      c.push(lr,lg,lb, lr,lg,lb, lr,lg,lb);
+      p.push(C.x*rLip, C.y*rLip, C.z*rLip, A.x*rLip, A.y*rLip, A.z*rLip, iA.x*rT, iA.y*rT, iA.z*rT);
+      c.push(lr,lg,lb, lr,lg,lb, lr,lg,lb);
+      p.push(C.x*rLip, C.y*rLip, C.z*rLip, iA.x*rT, iA.y*rT, iA.z*rT, iC.x*rT, iC.y*rT, iC.z*rT);
+      c.push(lr,lg,lb, lr,lg,lb, lr,lg,lb);
+      /* 顶面：绕中心拆成 3 块，中心微微隆起 */
+      var mR = rT + 0.018;
+      p.push(cen.x*mR, cen.y*mR, cen.z*mR, iA.x*rT, iA.y*rT, iA.z*rT, iB.x*rT, iB.y*rT, iB.z*rT);
+      c.push(tr,tg,tb, tr,tg,tb, tr,tg,tb);
+      p.push(cen.x*mR, cen.y*mR, cen.z*mR, iB.x*rT, iB.y*rT, iB.z*rT, iC.x*rT, iC.y*rT, iC.z*rT);
+      c.push(tr,tg,tb, tr,tg,tb, tr,tg,tb);
+      p.push(cen.x*mR, cen.y*mR, cen.z*mR, iC.x*rT, iC.y*rT, iC.z*rT, iA.x*rT, iA.y*rT, iA.z*rT);
+      c.push(tr,tg,tb, tr,tg,tb, tr,tg,tb);
+    })(topC.r*gTop, topC.g*gTop, topC.b*gTop, lipC.r*gLip, lipC.g*gLip, lipC.b*gLip);
 
     for (var k=0;k<3;k++){
       var j = T.nbr[k];
       if (j < 0) continue;
       if (tiles[j].removed) continue;         /* 打通的位置不砌墙 */
       var hN = tiles[j].h;
-      if (hN >= T.h - 1e-4) continue;
       var i0 = T.v[(k+1)%3], i1 = T.v[(k+2)%3];
       var a1 = tileVerts[i0], a2 = tileVerts[i1];
+      /* 接缝兜底：邻格被打成圆坑时，墙要一直落到坑面，
+         否则墙底和坑口之间会露出一条缝隙（从侧面能看穿） */
+      var eMid = new V3().copy(a1).add(a2).normalize();
+      for (var cj=0; cj<craters.length; cj++){
+        var crj = craters[cj];
+        var angE = Math.acos(clamp(eMid.dot(crj.c), -1, 1)) * PLANET_R;
+        if (angE < CR_R){
+          var sE = PLANET_R - craterDepth(crj, angE / CR_R);
+          if (sE - R < hN) hN = sE - R;
+        }
+      }
+      if (hN >= T.h - lip - 1e-4) continue;
+      var wallTop = T.h - lip;
       /* 按土层分带砌墙：挖下去能看出一层一层的截面 */
       var y = hN;
-      while (y < T.h - 1e-4){
-        var y2 = Math.min(T.h, y + DIG_STEP);
+      while (y < wallTop - 1e-4){
+        var y2 = Math.min(wallTop, y + DIG_STEP);
         var sc = soilColor((y + y2) * 0.5);
         var gn = 0.84 + 0.30*vhash(i * 0.31 + k, y2 * 3.7, i0 * 0.13);
         var rA = R + y, rB = R + y2;
@@ -1287,6 +1341,35 @@ function findTile(dir){
   _lastTileDir.copy(dir);
   return best;
 }
+/* 不吃缓存的精确查格：机位兜底不能因为缓存停在上一格上 */
+function findTileExact(dir){
+  var best = 0, bd = -2;
+  for (var i=0;i<tiles.length;i++){
+    var d = tiles[i].c.dot(dir);
+    if (d > bd){ bd = d; best = i; }
+  }
+  return best;
+}
+/* 这一方向上“土的最高点”：含自身和三邻格，避免站在格边时算漏掉旁边的土柱 */
+function camSoilTopAt(dir){
+  var i = findTileExact(dir);
+  var mx = PLANET_R + Math.max(0, tiles[i].h);
+  for (var k=0;k<3;k++){
+    var j = tiles[i].nbr[k];
+    if (j >= 0) mx = Math.max(mx, PLANET_R + Math.max(0, tiles[j].h));
+  }
+  /* 水井/灯塔这类实心道具也算“顶面”，镜头不许停在它们的身体里 */
+  if (solids){
+    for (var si=0; si<solids.length; si++){
+      var s = solids[si];
+      if (s.kind === 'sheep') continue;
+      if (s.kind === 'baobab' && (!s.ref || !s.ref.alive)) continue;
+      if (Math.acos(clamp(dir.dot(s.up), -1, 1)) * PLANET_R < s.r0 + 0.10)
+        mx = Math.max(mx, s.c.length() + s.h + 0.06);
+    }
+  }
+  return Math.max(mx, camGroundRadiusAt(dir));
+}
 
 /* 坑的深度剖面：中间是平的坑底（够站人），外圈是收口的坑壁 */
 function craterDepth(cr, u){
@@ -1344,6 +1427,18 @@ function camGroundRadiusAt(dir){
    第三视角下镜头沿“角色头部 -> 期望机位”的线段采样，
    碰到地表或火山/灯塔等实心体就停在前一个安全点，镜头自动收紧。 */
 var _occU = new V3(), _occP = new V3();
+/* 镜头落进土块体积里时，沿径向顶到这一格的土面之上。
+   抬升超过 4.5 的极端高塔不硬顶（否则镜头会瞬间飞到天顶），交给遮挡逻辑。 */
+var _liftU = new V3();
+function liftCameraOutOfSoil(){
+  var cR = camera.position.length();
+  if (cR < 1e-4) return;
+  _liftU.copy(camera.position).divideScalar(cR);
+  var need = camSoilTopAt(_liftU) + 0.26;
+  if (cR < need && need - cR <= 4.5){
+    camera.position.copy(_liftU).multiplyScalar(need);
+  }
+}
 function cameraBlockedAt(p){
   var d = p.length();
   if (d < 1e-4) return true;
@@ -3836,6 +3931,7 @@ function refreshVitals(){
   if (th !== _vitShown.th){ vitTh.style.width = th + '%'; _vitShown.th = th; }
   if (st !== _vitShown.st){ vitSt.style.width = st + '%'; _vitShown.st = st; }
   if (vitEl) vitEl.classList.toggle('dry', state.thirst <= 0.5);
+  refreshToolState();
 }
 /* 触屏没有 R 键：口渴条点一下 = 喝一口水壶 */
 (function(){
@@ -4103,6 +4199,42 @@ var slotEls = [];
     })(i, els[i]);
   }
 })();
+/* 挖土/盖土按钮的可用状态：变灰必须同时给出原因（按钮旁小字 + 点一下有 toast）。
+   体力不够时挖土变灰；没土时盖土变灰；日落/骑羊两个都停。 */
+var _toolShown = { dig: null, place: null };
+var _toolEls = null;
+function refreshToolState(){
+  if (!_toolShown) return;
+  if (typeof ride === 'undefined' || typeof sunset === 'undefined' || !ride || !sunset) return;
+  if (!_toolEls){
+    _toolEls = { d: document.getElementById('dig'), p: document.getElementById('place'),
+                 h: document.getElementById('toolWhy') };
+  }
+  var dEl = _toolEls.d, pEl = _toolEls.p;
+  if (!dEl || !pEl) return;
+  var digWhy = ride.on ? '先下羊' : (sunset.active ? '日落暂停' :
+               (state.stam < VIT_DIG_COST - 1e-6 ? '体力不足' : ''));
+  var placeWhy = ride.on ? '先下羊' : (sunset.active ? '日落暂停' :
+                 (state.inv[0] + state.inv[1] <= 0 ? '没有土' : ''));
+  if (_toolShown.dig !== digWhy){
+    _toolShown.dig = digWhy;
+    dEl.classList.toggle('off', !!digWhy);
+  }
+  if (_toolShown.place !== placeWhy){
+    _toolShown.place = placeWhy;
+    pEl.classList.toggle('off', !!placeWhy);
+  }
+  /* 工具组上方挂一条原因，两个都不可用时合并显示 */
+  var hint = _toolEls.h;
+  if (hint){
+    var why = [];
+    if (digWhy) why.push(digWhy);
+    if (placeWhy && placeWhy !== digWhy) why.push(placeWhy);
+    var txt = why.join(' · ');
+    if (hint.textContent !== txt) hint.textContent = txt;
+    hint.classList.toggle('on', why.length > 0);
+  }
+}
 function refreshInv(){
   for (var i=0;i<slotEls.length;i++){
     var el = slotEls[i];
@@ -4110,8 +4242,7 @@ function refreshInv(){
     el.classList.toggle('sel', state.sel === i);
     el.classList.toggle('empty', state.inv[i] <= 0);
   }
-  document.getElementById('dig').classList.toggle('off', !!ride.on);
-  document.getElementById('place').classList.toggle('off', state.inv[0] + state.inv[1] <= 0);
+  refreshToolState();
 }
 function setSel(i){
   state.sel = i;
@@ -4160,7 +4291,7 @@ function placeTargetDir(){
 
 function updateGhost(){
   ghost.userData.why = '';
-  if (ride.on || falling || sunset.active || state.inv[state.sel] <= 0){
+  if (ride.on || falling || sunset.active || (state.inv[0] + state.inv[1] <= 0)){
     ghost.visible = false;
     ghost.userData.ok = false;
     ghost.userData.why = 'idle';
@@ -4168,11 +4299,10 @@ function updateGhost(){
   }
   var tgt = placeTargetDir();
   var T = tiles[findTile(tgt)];
-  var cr = null;
-  for (var i=0;i<craters.length;i++){
-    var ang = Math.acos(clamp(tgt.dot(craters[i].c), -1, 1)) * PLANET_R;
-    if (ang < CR_R*0.92){ cr = craters[i]; break; }
-  }
+  /* 和 placeAt 用同一套选坑规则：优先脚下的坑 */
+  var cr = craterNear(playerUp, CR_R*0.92) || craterNear(tgt, CR_R + 0.45);
+  /* 井口/灯塔底座上盖不了：不画预览，点下去会说明原因 */
+  if (!cr && propAtDir(tgt)){ ghost.visible = false; ghost.userData.ok = false; ghost.userData.why = 'prop'; return; }
   var ok, rG;
   if (cr){
     ok = true;
@@ -4187,8 +4317,9 @@ function updateGhost(){
   ghost.userData.ok = ok;
   /* 放不下就别画：以前放不下也会画一片红的，挖完一抬头整块半透明三角糊在地表上 */
   if (!ok){ ghost.visible = false; ghost.userData.why = 'noplace'; return; }
-  /* 站在坑里时，这块瓦片预览会悬在头顶、糊在镜头上，像一片半透明三角墙戳向天空 */
-  if (rG - playerR > 0.8){ ghost.visible = false; ghost.userData.why = 'deep'; return; }
+  /* 站在坑里时，这块瓦片预览会悬在头顶、糊在镜头上，像一片半透明三角墙戳向天空；
+     预览落在脚面以下时同理，直接不画 */
+  if (rG - playerR > 0.8 || rG < playerR - 0.06){ ghost.visible = false; ghost.userData.why = 'deep'; return; }
   _ghostMid.set((A.x+B.x+C.x)*rG/3, (A.y+B.y+C.y)*rG/3, (A.z+B.z+C.z)*rG/3);
   if (camera.position.distanceTo(_ghostMid) < 2.4){ ghost.visible = false; ghost.userData.why = 'near'; return; }
   /* 一格瓦片边长 4 个单位，整块铺出来等于糊住半屏；缩到一半当“落点标记” */
@@ -4207,9 +4338,12 @@ function updateGhost(){
 
 function digAt(){
   if (ride.on){ toast('骑着羊挖不了，先下来。'); return; }
-  if (sunset.active) return;
+  if (sunset.active){ toast('太阳还没落完，土动不了，等一会儿。'); return; }
   /* 体力：一铲 6 点，满体力能连挖 16 铲；不够就歇一下（站定回 12/s，走动回 4/s） */
-  if (state.stam < VIT_DIG_COST - 1e-6){ toast('手软了，站一会儿回口气再挖。'); return; }
+  if (state.stam < VIT_DIG_COST - 1e-6){
+    toast('体力不够（还差 ' + Math.ceil(VIT_DIG_COST - state.stam) + ' 点），站定回口气再挖。');
+    return;
+  }
   state.stam = Math.max(0, state.stam - VIT_DIG_COST);
   refreshVitals();
   /* 找脚下最近的圆坑：同一个位置继续挖就往下加深，坑口不会越挖越散 */
@@ -4260,20 +4394,49 @@ function digAt(){
   persist();
 }
 
+/* 这块地皮上有没有实心道具（井/灯塔/玫瑰/火山/活着的猴面包树），有就不许往上堆土 */
+function propAtDir(dir){
+  for (var i=0;i<solids.length;i++){
+    var s = solids[i];
+    if (s.kind === 'sheep') continue;
+    if (s.kind === 'baobab' && (!s.ref || !s.ref.alive)) continue;
+    var ang = Math.acos(clamp(dir.dot(s.up), -1, 1)) * PLANET_R;
+    if (ang < s.r0 + 0.30) return s;
+  }
+  return null;
+}
+
+/* 找离某方向 lim 以内的圆坑（lim 是球面距离，不是角度） */
+function craterNear(dir, lim){
+  for (var i=0;i<craters.length;i++){
+    var ang = Math.acos(clamp(dir.dot(craters[i].c), -1, 1)) * PLANET_R;
+    if (ang < lim) return craters[i];
+  }
+  return null;
+}
+
 function placeAt(){
-  if (ride.on){ toast('骑着羊盖不了。'); return; }
-  if (sunset.active) return;
+  if (ride.on){ toast('骑着羊盖不了，先下来。'); return; }
+  if (sunset.active){ toast('太阳还没落完，土动不了，等一会儿。'); return; }
   if (state.inv[state.sel] <= 0){
     var other = 1 - state.sel;
     if (state.inv[other] > 0){ setSel(other); toast('换成了' + ITEM_NAME[other] + '。'); }
-    else toast('手里没有' + ITEM_NAME[state.sel] + '了，先去挖点。');
+    else toast('背包里没有土了（挖土会往背包里存），先去挖两铲。');
     return;
   }
   var tgt = placeTargetDir();
-  var cr = null, tIdx = -1;
-  for (var i=0;i<craters.length;i++){
-    var ang = Math.acos(clamp(tgt.dot(craters[i].c), -1, 1)) * PLANET_R;
-    if (ang < CR_R*0.92){ cr = craters[i]; break; }
+  /* 优先填自己脚下的坑：站在坑底按“盖土”，本来就该把这个坑填起来，
+     而不是在坑沿旁边竖一根土柱（那根柱子会横穿坑壁，看起来就是穿模） */
+  var cr = craterNear(playerUp, CR_R*0.92) || craterNear(tgt, CR_R + 0.45);
+  var tIdx = -1;
+  if (!cr){
+    /* 井口/灯塔底座上堆土 = 把道具埋进去，人也跟着站进土里，直接拦住并说明原因 */
+    var pr = propAtDir(tgt);
+    if (pr){
+      var pn = { well:'水井', beacon:'灯塔', rose:'玫瑰', volcano:'火山口', baobab:'猴面包树' }[pr.kind] || '这里的摆设';
+      toast(pn + '上不能堆土，换个地方盖。');
+      return;
+    }
   }
   if (cr){
     if (cr.p){
@@ -4295,6 +4458,16 @@ function placeAt(){
       T.h = T.h + DIG_STEP;
     }
   }
+  /* 盖的是自己脚下这一格时，地面会顶上来：人立刻跟上去，
+     不能等 7/s 的平滑抬升，否则连点几层整个人就埋进土里了 */
+  var gNow = groundRadiusAt(playerUp);
+  if (gNow > playerR + 0.005){
+    playerR = gNow;
+    playerVR = 0;
+    falling = false;
+  }
+  /* 新土如果顶到镜头所在的那一格，把机位抬到土面上，别让镜头埋进土块里 */
+  liftCameraOutOfSoil();
   state.inv[state.sel]--;
   state.placed++;
   gainXp(XP_PLACE);
@@ -6924,12 +7097,13 @@ function updatePlanet(dt){
       camera.up.copy(playerUp);
       camera.lookAt(camAnchor);
     } else {
-      /* 坑壁 / 山体遮挡：镜头沿视线采样，必要时向角色收紧 */
+      /* 坑壁 / 山体 / 土墙遮挡：镜头沿视线采样，必要时向角色收紧 */
+      var camWant = target.distanceTo(camAnchor);
       var occT = occludeCamera(camAnchor, target);
-      /* 站在坑里：低机位会被坑壁挡死（整屏坑壁、看不见角色），
-         逐步抬高俯仰角找一个能看见角色的机位；只对坑生效，平地/山体照旧。 */
-      if (occT.distanceTo(camAnchor) < target.distanceTo(camAnchor)*0.80 &&
-          craterDepthUnder(playerUp) > 0.35){
+      /* 被挡到不足 72% 时会变成“贴脸机位”，整块土/坑壁横跨屏幕。
+         先抬俯仰角；还不行就左右各试偏角，宁可换个角度也不贴脸。 */
+      if (occT.distanceTo(camAnchor) < camWant*0.72){
+        /* 不管是坑壁、土墙、井圈还是山体，被挡住就先抬俯仰角找机位 */
         for (var li=1; li<=7; li++){
           var pp = Math.min(1.42, camPitch + li*0.18);
           var lt = new V3().copy(playerPos)
@@ -6940,8 +7114,22 @@ function updatePlanet(dt){
           if (lo.distanceTo(camAnchor) > occT.distanceTo(camAnchor)) occT = lo;
           if (lo.distanceTo(lt) < 0.03) break;
         }
+        if (occT.distanceTo(camAnchor) < camWant*0.72){
+          for (var yi=0; yi<4; yi++){
+            var yo = (yi % 2 ? -1 : 1) * (yi < 2 ? 0.22 : 0.44);
+            var yoF = new V3().copy(camF).applyAxisAngle(playerUp, camYaw + yo).normalize();
+            var yt = new V3().copy(playerPos)
+              .addScaledVector(yoF, -Math.cos(camPitch)*cdist)
+              .addScaledVector(playerUp, Math.sin(camPitch)*cdist + (ride.on ? 0.3 : 0));
+            if (yt.length() < minR) yt.setLength(minR);
+            var yo2 = occludeCamera(camAnchor, yt);
+            if (yo2.distanceTo(camAnchor) > occT.distanceTo(camAnchor)) occT.copy(yo2);
+          }
+        }
       }
       camera.position.lerp(occT, 1 - Math.exp(-11*dt));
+      /* 硬兜底：机位绝不停在土块里（那会看到整屏土壁的背面） */
+      liftCameraOutOfSoil();
       camera.up.copy(playerUp);
       camera.lookAt(camAnchor);
     }
@@ -7159,6 +7347,7 @@ if (/[?&]dbg=1/.test(location.search)){
       return +groundRadiusAt(u).toFixed(3);
     },
     ride: function(){ return ride.on; },
+    maxH: function(){ var m = 0; for (var i=0;i<tiles.length;i++) if (tiles[i].h > m) m = tiles[i].h; return +m.toFixed(3); },
     sheep: function(){ return { r: sheep.r, up: sheep.up.toArray(), friend: sheep.friend }; },
     sol: function(){ return solids; },
     tp: function(lat, lon, d){
