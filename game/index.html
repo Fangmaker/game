@@ -315,6 +315,48 @@
   body.touch .slot .num{display:none}
   body.touch #hint{display:none}
 
+  /* ---------- 工坊 ---------- */
+  #craftBtn{
+    position:fixed;left:50%;transform:translateX(-50%);
+    bottom:calc(env(safe-area-inset-bottom,0px) + 74px);
+    padding:5px 13px;border-radius:11px;z-index:6;
+    font-family:inherit;font-size:11px;letter-spacing:1px;
+    color:rgba(244,234,217,.86);
+    background:rgba(9,14,26,.55);border:1px solid rgba(232,199,149,.22);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  }
+  #craftBtn b{color:#f0d7a8;font-weight:400;margin-left:5px}
+  #craftBtn:active{transform:translateX(-50%) scale(.95)}
+  #craft{
+    position:fixed;left:50%;top:50%;transform:translate(-50%,-46%) scale(.96);
+    width:min(92vw,392px);max-height:74vh;overflow:auto;z-index:20;
+    padding:14px 14px 12px;border-radius:16px;
+    background:rgba(8,12,22,.92);border:1px solid rgba(232,199,149,.22);
+    box-shadow:0 18px 48px rgba(0,0,0,.55);
+    opacity:0;pointer-events:none;transition:opacity .16s ease,transform .16s ease;
+    display:flex;flex-direction:column;gap:8px;
+  }
+  #craft.on{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
+  #craft h3{margin:0 0 2px;font-size:13px;font-weight:400;letter-spacing:2px;color:#f0d7a8}
+  #craft .mats{display:flex;gap:10px;font-size:10.5px;color:rgba(244,234,217,.62)}
+  #craftList{display:flex;flex-direction:column;gap:7px}
+  .rc{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:10px;
+      background:rgba(244,234,217,.045);border:1px solid rgba(244,234,217,.10)}
+  .rc .nm{font-size:12px;color:#f4ead9}
+  .rc .ct{font-size:10px;color:rgba(244,234,217,.55)}
+  .rc .own{font-size:10px;color:#f0d7a8}
+  .rc .grow{flex:1}
+  .rc button{
+    font-family:inherit;font-size:11px;padding:5px 9px;border-radius:8px;
+    color:#10141f;background:#e8c795;border:0;
+  }
+  .rc button.b2{background:rgba(232,199,149,.16);color:#f0d7a8;
+    border:1px solid rgba(232,199,149,.34)}
+  .rc button:disabled{opacity:.30}
+  #craft .tip{font-size:10px;color:rgba(244,234,217,.45);line-height:1.5}
+  #craft .x{align-self:flex-end;font-size:11px;color:rgba(244,234,217,.6);
+    background:none;border:0;padding:2px 4px;font-family:inherit}
+
   /* ---------- 角色 / 换装 ---------- */
   #lookBtn{
     position:fixed;right:calc(env(safe-area-inset-right,0px) + 12px);
@@ -530,6 +572,34 @@
     </svg>
     <b>0</b>
   </button>
+  <button class="slot" data-i="2" aria-label="木材">
+    <span class="num">3</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5.4 15.2 12 11.4l6.6 3.8-6.6 3.8Z" fill="#a9793f" stroke="#d3a469" stroke-width="1.1"/>
+      <path d="M5.4 15.2v2.4l6.6 3.8 6.6-3.8v-2.4" fill="#8a6132" stroke="#d3a469" stroke-width="1.1"/>
+      <path d="M8.6 11.2h6.8M12 8.2v3" stroke="#e0b479" stroke-width="1.2"/>
+      <circle cx="12" cy="17.2" r="1.5" fill="#c79a68"/>
+    </svg>
+    <b>0</b>
+  </button>
+  <button class="slot" data-i="3" aria-label="矿石">
+    <span class="num">4</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke-linejoin="round">
+      <path d="M6.6 10.4 12 7.4l5.4 3v6L12 19.4l-5.4-3Z" fill="#6f7480" stroke="#a8b0bd" stroke-width="1.1"/>
+      <path d="M10.2 10.2 11.7 8.6l1.6 1.6-1.3 2.3h-1.9Z" fill="#8fd6e8" stroke="#d7f2fb" stroke-width=".9"/>
+      <path d="M16.2 13.4h.9M8.4 15.4h.8" stroke="#4d515a" stroke-width="1" stroke-linecap="round"/>
+    </svg>
+    <b>0</b>
+  </button>
+</div>
+
+<button id="craftBtn" aria-label="工坊">工坊<b id="partN">0</b></button>
+<div id="craft">
+  <button class="x" id="craftClose">关闭</button>
+  <h3>工坊</h3>
+  <div class="mats" id="craftMats"></div>
+  <div id="craftList"></div>
+  <div class="tip">挖土会挖到矿石，拔猴面包树给木材。做好的物件点「造」，直接摆在身前那格。</div>
 </div>
 
 <button id="act" aria-label="互动">
@@ -1389,6 +1459,16 @@ function groundRadiusAt(dir){
     if (cr.p && u < CR_PUNCH) return -1;              /* 挖穿的通洞 */
     var s = PLANET_R - craterDepth(cr, u);            /* 平底 + 收口坑壁 */
     if (s < base) base = s;
+  }
+  /* 造出来的石阶/土墙/木桥：踩得上去，也挡得住人 */
+  if (typeof PARTS !== 'undefined' && PARTS.length && base > 0){
+    for (var pi=0; pi<PARTS.length; pi++){
+      var P = PARTS[pi];
+      var pa = Math.acos(clamp(dir.dot(P.dir), -1, 1)) * PLANET_R;
+      if (pa > P.r) continue;
+      var top = P.g + P.h;
+      if (top > base) base = top;
+    }
   }
   return base;
 }
@@ -3632,7 +3712,8 @@ var state = {
   shards: [],
   sheepFriend: false,
   pos: null,
-  inv: [0, 0],
+  inv: [0, 0, 0, 0],        /* 表层土 / 深层岩 / 木材 / 矿石 */
+  parts: [0, 0, 0],         /* 做好的石阶 / 土墙 / 木桥 */
   sel: 0,
   digs: 0,
   placed: 0,
@@ -3744,8 +3825,17 @@ try {
       state.shards = Array.isArray(sv.shards) ? sv.shards : [];
       state.sheepFriend = !!sv.sheepFriend;
       state.pos = Array.isArray(sv.pos) && sv.pos.length === 3 ? sv.pos : null;
-      state.inv = Array.isArray(sv.inv) && sv.inv.length === 2 ? [Math.max(0, sv.inv[0]|0), Math.max(0, sv.inv[1]|0)] : [0,0];
-      state.sel = sv.sel === 1 ? 1 : 0;
+      state.inv = [0,0,0,0];
+      if (Array.isArray(sv.inv)){
+        for (var _iv = 0; _iv < 4 && _iv < sv.inv.length; _iv++) state.inv[_iv] = Math.max(0, sv.inv[_iv]|0);
+      }
+      state.parts = [0,0,0];
+      if (Array.isArray(sv.parts)){
+        for (var _pv = 0; _pv < 3 && _pv < sv.parts.length; _pv++) state.parts[_pv] = Math.max(0, sv.parts[_pv]|0);
+      }
+      state.sel = clamp(sv.sel|0, 0, 3);
+      /* 建好的物件先记下来，等工坊模块定义完再真正生成（顺序原因） */
+      state._builtPending = Array.isArray(sv.built) ? sv.built : [];
       state.digs = sv.digs|0;
       state.placed = sv.placed|0;
       state.punched = !!sv.punched;
@@ -3822,6 +3912,10 @@ function persist(){
       skillCd: state.skillCd,
       unlocked: state.unlocked, qClaimed: state.qClaimed,
       inv: state.inv, sel: state.sel,
+      parts: state.parts,
+      built: (typeof PARTS !== 'undefined' ? PARTS.map(function(P){
+        return [P.kind, +P.dir.x.toFixed(4), +P.dir.y.toFixed(4), +P.dir.z.toFixed(4), +P.g.toFixed(3)];
+      }) : []),
       digs: state.digs, placed: state.placed,
       punched: state.punched, fell: state.fell,
       mods: mods,
@@ -4204,7 +4298,8 @@ function updateParticles(dt){
 }
 
 /* ---------------------------------------------------------------- 挖 / 盖 / 物品栏 */
-var ITEM_NAME = ['表层土', '深层岩'];
+var ITEM_NAME = ['表层土', '深层岩', '木材', '矿石'];
+var MAT_NAME = ['土', '石', '木', '矿'];
 var slotEls = [];
 (function bindInv(){
   var els = document.querySelectorAll('#inv .slot');
@@ -4266,6 +4361,181 @@ function setSel(i){
   persist();
 }
 refreshInv();
+
+/* ---------------------------------------------------------------- 工坊 / 建造 */
+/* 配方：土 / 石 / 木 / 矿 四种材料 → 可放置物件 */
+var RECIPES = [
+  { id:'stair',  name:'石阶', cost:[2,0,1,0], h:0.55, w:0.72, d:0.72, color:'#8d8275',
+    desc:'能踩上去的台阶' },
+  { id:'wall',   name:'土墙', cost:[0,2,1,0], h:1.05, w:0.92, d:0.26, color:'#8a6440',
+    desc:'挡人挡镜头的一堵墙' },
+  { id:'bridge', name:'木桥', cost:[0,0,2,2], h:0.18, w:1.45, d:0.66, color:'#a9793f',
+    desc:'铺在坑口上的桥板' }
+];
+var PARTS = [];   /* 已造出来的物件：{ kind, dir, h, r, g, mesh } */
+var _partMats = {};
+
+function craftCostText(cost){
+  var out = [];
+  for (var i=0;i<4;i++) if (cost[i] > 0) out.push(MAT_NAME[i] + '×' + cost[i]);
+  return out.join(' + ');
+}
+function canCraft(ri){
+  var c = RECIPES[ri].cost;
+  for (var i=0;i<4;i++) if (state.inv[i] < c[i]) return false;
+  return true;
+}
+function doCraft(ri){
+  if (!RECIPES[ri]) return false;
+  if (!canCraft(ri)){ toast('材料不够：' + craftCostText(RECIPES[ri].cost) + '。'); return false; }
+  var c = RECIPES[ri].cost;
+  for (var i=0;i<4;i++) state.inv[i] -= c[i];
+  state.parts[ri] = (state.parts[ri]|0) + 1;
+  refreshInv(); refreshCraft();
+  toast('做好了 1 个' + RECIPES[ri].name + '，点「造」摆到身前。');
+  persist();
+  return true;
+}
+/* 造：把做好的物件真正放到身前那格，并成为实心体（挡镜头、可踩） */
+function buildPart(ri){
+  if (!RECIPES[ri]) return false;
+  if ((state.parts[ri]|0) <= 0){ toast('还没有做好的' + RECIPES[ri].name + '，先合成一个。'); return false; }
+  if (ride.on){ toast('骑着羊造不了，先下来。'); return false; }
+  if (sunset.active){ toast('太阳还没落完，先别动土。'); return false; }
+  var def = RECIPES[ri];
+  var dir = placeTargetDir();
+  var g = groundRadiusAt(dir);
+  if (g < 0){ toast('这格是通洞，放不了。'); return false; }
+  if (crafterNear(dir, 0.9)){ toast('这里已经有东西了，换个地方。'); return false; }
+  if (propAtDir(dir)){ toast('摆设旁边放不下，换个地方。'); return false; }
+  if (craterNear(dir, CR_R*0.55)){ toast('坑口上放不稳，先填平或者换个地方。'); return false; }
+
+  var up = dir.clone().normalize();
+  var mesh = spawnPartMesh(ri, up, g);
+  var r = Math.max(def.w, def.d) * 0.56;
+  addSolid(up, 0, def.h, r, r, 'part', null);
+  PARTS.push({ kind: ri, dir: up.clone(), h: def.h, r: r, g: g, mesh: mesh });
+  state.parts[ri]--;
+  state.placed++;
+  gainXp(4);
+  spawnDust(mesh.position.clone(), up);
+  refreshCraft(); refreshInv(); checkQuests(); checkUnlocks(true);
+  toast('造好了' + def.name + '（' + (state.parts[ri]|0) + ' 个' + def.name + '存货）。');
+  netWorldPart(ri, up, g);
+  persist();
+  return true;
+}
+function spawnPartMesh(ri, up, g){
+  var def = RECIPES[ri];
+  var mesh = new THREE.Mesh(new THREE.BoxGeometry(def.w, def.h, def.d), _partMat(def));
+  mesh.position.copy(up).multiplyScalar(g + def.h/2 - 0.015);
+  mesh.quaternion.setFromUnitVectors(new V3(0,1,0), up);
+  mesh.castShadow = true;
+  scene.add(mesh);
+  return mesh;
+}
+function _partMat(def){
+  if (!_partMats[def.id]){
+    _partMats[def.id] = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(def.color), roughness: .92, metalness: .04, flatShading: true });
+  }
+  return _partMats[def.id];
+}
+function crafterNear(dir, lim){
+  for (var i=0;i<PARTS.length;i++){
+    var P = PARTS[i];
+    var ang = Math.acos(clamp(dir.dot(P.dir), -1, 1)) * PLANET_R;
+    if (ang < lim) return P;
+  }
+  return null;
+}
+function partGroundAt(dir){
+  var best = -1;
+  for (var i=0;i<PARTS.length;i++){
+    var P = PARTS[i];
+    var ang = Math.acos(clamp(dir.dot(P.dir), -1, 1)) * PLANET_R;
+    if (ang <= P.r){
+      var top = P.g + P.h;
+      if (top > best) best = top;
+    }
+  }
+  return best;
+}
+
+/* ---------- 工坊界面 ---------- */
+var _craftOn = false;
+var _craftListEl = null;
+function refreshCraft(){
+  if (!_craftListEl){
+    _craftListEl = document.getElementById('craftList');
+    if (!_craftListEl) return;
+    var html = '';
+    for (var i=0;i<RECIPES.length;i++){
+      var R = RECIPES[i];
+      html += '<div class="rc" data-r="' + i + '">' +
+        '<div><div class="nm">' + R.name + '</div>' +
+        '<div class="ct">' + craftCostText(R.cost) + ' · ' + R.desc + '</div></div>' +
+        '<div class="grow"></div>' +
+        '<div class="own" data-own="' + i + '">×0</div>' +
+        '<button class="b2" data-act="craft" data-i="' + i + '">做</button>' +
+        '<button data-act="build" data-i="' + i + '">造</button>' +
+      '</div>';
+    }
+    _craftListEl.innerHTML = html;
+    _craftListEl.addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b) return;
+      var i = +(b.getAttribute('data-i') || 0);
+      if (b.getAttribute('data-act') === 'craft') doCraft(i);
+      else buildPart(i);
+    });
+  }
+  var mats = document.getElementById('craftMats');
+  if (mats){
+    mats.innerHTML = '土 <b>' + state.inv[0] + '</b> · 石 <b>' + state.inv[1] +
+                     '</b> · 木 <b>' + state.inv[2] + '</b> · 矿 <b>' + state.inv[3] + '</b>';
+  }
+  var total = 0;
+  for (var k=0;k<3;k++) total += (state.parts[k]|0);
+  var pn = document.getElementById('partN');
+  if (pn) pn.textContent = total;
+  for (var j=0;j<RECIPES.length;j++){
+    var own = _craftListEl.querySelector('[data-own="' + j + '"]');
+    if (own) own.textContent = '×' + (state.parts[j]|0);
+    var cb = _craftListEl.querySelector('[data-act="craft"][data-i="' + j + '"]');
+    if (cb) cb.disabled = !canCraft(j);
+    var bb = _craftListEl.querySelector('[data-act="build"][data-i="' + j + '"]');
+    if (bb) bb.disabled = (state.parts[j]|0) <= 0;
+  }
+}
+function toggleCraft(on){
+  _craftOn = (on === undefined) ? !_craftOn : !!on;
+  refreshCraft();
+  var el = document.getElementById('craft');
+  if (el) el.classList.toggle('on', _craftOn);
+}
+(function bindCraft(){
+  var btn = document.getElementById('craftBtn');
+  if (btn) btn.addEventListener('click', function(){ toggleCraft(); });
+  var x = document.getElementById('craftClose');
+  if (x) x.addEventListener('click', function(){ toggleCraft(false); });
+  /* 把存档里建好的物件重新生成出来 */
+  var pend = state._builtPending || [];
+  for (var i=0;i<pend.length;i++){
+    var b = pend[i];
+    if (!b || b.length < 5 || !RECIPES[b[0]|0]) continue;
+    var up = new V3(+b[1], +b[2], +b[3]);
+    if (up.lengthSq() < 1e-6) continue;
+    up.normalize();
+    var def = RECIPES[b[0]|0];
+    var g = +b[4] || PLANET_R;
+    var mesh = spawnPartMesh(b[0]|0, up, g);
+    var r = Math.max(def.w, def.d) * 0.56;
+    addSolid(up, 0, def.h, r, r, 'part', null);
+    PARTS.push({ kind: b[0]|0, dir: up.clone(), h: def.h, r: r, g: g, mesh: mesh });
+  }
+  refreshCraft();
+})();
 
 var _chunkGeo = new THREE.BoxGeometry(0.12, 0.1, 0.12);
 var _chunkMatA = new THREE.MeshStandardMaterial({ color: new THREE.Color('#8a6440'), transparent: true, flatShading: true });
@@ -4377,8 +4647,15 @@ function digAt(){
   cr.d = Math.min(DIG_DEPTH_MAX, cr.d + DIG_STEP);
   state.inv[deep ? 1 : 0]++;
   state.digs++;
-  gainXp(XP_DIG);
   var hit = cr.c.clone().multiplyScalar(PLANET_R - cr.d + 0.16);
+  /* 挖到矿脉：每 5 铲左右蹦一块矿石（深层更容易出） */
+  var _oreOdds = deep ? 3 : 5;
+  if (((state.digs * 7 + (cr.d * 10 | 0)) % _oreOdds) === 0){
+    state.inv[3]++;
+    toast('挖到一块' + ITEM_NAME[3] + '。可以去工坊换东西。');
+    spawnSparkle(hit, playerUp.clone().negate(), 6, '#9fe6f7');
+  }
+  gainXp(XP_DIG);
   if (cr.d >= DIG_DEPTH_MAX - 1e-4){
     cr.d = DIG_DEPTH_MAX;
     cr.p = true;
@@ -4434,6 +4711,12 @@ function craterNear(dir, lim){
 function placeAt(){
   if (ride.on){ toast('骑着羊盖不了，先下来。'); return; }
   if (sunset.active){ toast('太阳还没落完，土动不了，等一会儿。'); return; }
+  /* 木材/矿石是合成材料，不能当土盖 */
+  if (state.sel >= 2){
+    if (state.inv[0] > 0){ setSel(0); toast('木材/矿石要在工坊里用，切回' + ITEM_NAME[0] + '。'); }
+    else toast('木材/矿石不能直接盖，去工坊做成石阶、土墙或木桥。');
+    return;
+  }
   if (state.inv[state.sel] <= 0){
     var other = 1 - state.sel;
     if (state.inv[other] > 0){ setSel(other); toast('换成了' + ITEM_NAME[other] + '。'); }
@@ -4523,11 +4806,13 @@ function pullBaobab(b){
   treeCount++;
   state.treesPulled++;
   state.dust += 2;
+  state.inv[2] = (state.inv[2]|0) + 3;      /* 树干当木材 */
   if (bi >= 0 && state.pulledToday.indexOf(bi) < 0) state.pulledToday.push(bi);
   spawnDust(b.pos.clone(), upB);
-  toast('拔掉了一棵猴面包树。+2 星尘');
+  toast('拔掉了一棵猴面包树。+2 星尘、+3 木材');
   refreshChips();
   refreshQuests();
+  refreshInv();
   netWorldTree(bi);       /* 对方那棵也一起消失 */
   persist();
   nearTarget = null;
@@ -5154,6 +5439,25 @@ function netWorldTile(i){
 }
 function netWorldTree(i){ return netWorld({ t:'world', q:'p', i:i }); }
 function netWorldTreeWater(i, lv){ return netWorld({ t:'world', q:'w', i:i, lv:lv|0 }); }
+/* 建造同步：对方也把这块阶/墙/桥立起来 */
+function netWorldPart(kind, dir, g){
+  return netWorld({ t:'world', q:'b', k: kind|0,
+    u: [+dir.x.toFixed(4), +dir.y.toFixed(4), +dir.z.toFixed(4)], g: +g.toFixed(3) });
+}
+function netApplyPart(kind, u, g){
+  if (!RECIPES[kind|0] || !Array.isArray(u) || u.length < 3) return false;
+  var up = new V3(+u[0], +u[1], +u[2]);
+  if (up.lengthSq() < 1e-6) return false;
+  up.normalize();
+  if (crafterNear(up, 0.6)) return false;
+  var def = RECIPES[kind|0];
+  var gg = +g || PLANET_R;
+  var mesh = spawnPartMesh(kind|0, up, gg);
+  var r = Math.max(def.w, def.d) * 0.56;
+  addSolid(up, 0, def.h, r, r, 'part', null);
+  PARTS.push({ kind: kind|0, dir: up.clone(), h: def.h, r: r, g: gg, mesh: mesh });
+  return true;
+}
 function netWorldGarden(){ return netWorld({ t:'world', q:'g', rs: state.roseStage, gd: state.garden }); }
 
 var _wv = new V3();
@@ -5241,6 +5545,8 @@ function netApplyWorld(m){
   } else if (m.q === 'g'){
     if (typeof m.rs === 'number' && m.rs > state.roseStage){ applyRoseStage(m.rs, true); dirty = true; }
     if (typeof m.gd === 'number' && m.gd > state.garden){ applyGarden(m.gd, true); dirty = true; }
+  } else if (m.q === 'b'){
+    netApplyPart(m.k|0, m.u, m.g);
   }
   if (dirty){
     markTerrain();          /* 下一帧重建 base + overlay，坑/土块/井口一起刷新 */
@@ -7495,6 +7801,24 @@ if (/[?&]dbg=1/.test(location.search)){
     },
     treePull: function(){ if (nearTarget && nearTarget.type === 'baobab') pullBaobab(nearTarget.ref); return true; },
     treeNear: function(){ return nearTarget ? { type: nearTarget.type, grown: !!nearTarget.grown } : null; },
+    /* 工坊：材料、配方、合成、建造（测试用，和玩家点按钮同一条路径） */
+    give: function(w, rk, wd, or){
+      state.inv[0] += (w|0); state.inv[1] += (rk|0);
+      state.inv[2] += (wd|0); state.inv[3] += (or|0);
+      refreshInv(); refreshCraft(); persist();
+      return state.inv.slice();
+    },
+    craft: function(i){ var ok = doCraft(i|0); return { ok: ok, inv: state.inv.slice(), parts: state.parts.slice() }; },
+    build: function(i){ var ok = buildPart(i|0); return { ok: ok, parts: state.parts.slice(), n: PARTS.length }; },
+    partsInfo: function(){
+      return PARTS.map(function(P){ return { kind: P.kind, g: +P.g.toFixed(2),
+        h: P.h, r: +P.r.toFixed(2), top: +(P.g + P.h).toFixed(2) }; });
+    },
+    groundAt: function(d){
+      var u = new V3(d[0], d[1], d[2]).normalize();
+      return +groundRadiusAt(u).toFixed(3);
+    },
+    craftOpen: function(on){ toggleCraft(on); return _craftOn; },
     /* 生存数值：不传参读，传参直接写（测试用） */
     vitals: function(seed){
       if (seed){
