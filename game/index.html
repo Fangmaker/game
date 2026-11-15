@@ -5756,6 +5756,10 @@ var netStatusEl = document.getElementById('netStatus');
 var netGoEl = document.getElementById('netGo');
 var netCloseEl = document.getElementById('netClose');
 
+/* 公网链接直进：?ws=wss://隧道地址&room=房间名&go=1 打开即填好并自动进房 */
+var _netQ = null;
+try { _netQ = new URLSearchParams(location.search); } catch(e){ _netQ = null; }
+
 /* 换装 / 切角色后请求一次全量状态；不联机时只是一个布尔赋值 */
 function netFull(){ NET.full = true; }
 function netDig(){ NET.digSeq++; }
@@ -6418,6 +6422,14 @@ netGoEl.addEventListener('click', function(){ if (NET.on) netDisconnect(); else 
   netServerEl.value = NET.server || defaultServer();
   netUi();
 })();
+/* 查询串优先于本地记忆：链接一开就对齐到指定隧道/房间 */
+if (_netQ){
+  if (_netQ.get('ws')) netServerEl.value = _netQ.get('ws');
+  if (_netQ.get('room')) netRoomEl.value = _netQ.get('room');
+  if (_netQ.get('go') === '1' && netRoomEl.value && netServerEl.value){
+    setTimeout(function(){ if (!NET.on) netConnect(); }, 1500);
+  }
+}
 
 /* ---------------------------------------------------------------- 技能 */
 var SKILL_DEFS = {
