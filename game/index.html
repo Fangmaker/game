@@ -3727,6 +3727,7 @@ var state = {
   thirst: 100,
   stam: 100,
   kills: 0,
+  bossDown: 0,
   lv: 1,
   xp: 0,
   unlocked: ['prince'],
@@ -3849,6 +3850,7 @@ try {
       state.thirst = sv.thirst === undefined ? VIT_TH_MAX : clamp(+sv.thirst || 0, 0, VIT_TH_MAX);
       state.stam = sv.stam === undefined ? VIT_ST_MAX : clamp(+sv.stam || 0, 0, VIT_ST_MAX);
       state.kills = sv.kills|0;
+      state.bossDown = sv.bossDown|0;
       if (Array.isArray(sv.unlocked)) state.unlocked = sv.unlocked.filter(function(id){ return !!unlockDef(id); });
       if (Array.isArray(sv.qClaimed)) state.qClaimed = sv.qClaimed.filter(function(id){ return typeof id === 'string'; });
       /* 恢复挖填过的地形 */
@@ -3899,7 +3901,7 @@ function persist(){
       v: 9,
       day: state.day, sunsets: state.sunsets,
       hp: +state.hp.toFixed(1), thirst: +state.thirst.toFixed(1), stam: +state.stam.toFixed(1),
-      kills: state.kills|0, lv: state.lv, xp: +state.xp.toFixed(1),
+      kills: state.kills|0, bossDown: state.bossDown|0, lv: state.lv, xp: +state.xp.toFixed(1),
       roseStage: state.roseStage, garden: state.garden,
       water: state.water, dust: state.dust,
       treesPulled: state.treesPulled,
@@ -7018,75 +7020,120 @@ function updatePlayerGround(dt){
 var MOB_MAX = 3;
 var MOB_HP = 60, MOB_DMG = 8, MOB_ATK_CD = 1.1, MOB_RANGE = 1.35;
 var MOB_SPEED = 1.8, MOB_AGGRO = 8.5, MOB_SPAWN_CD = 6.0, MOB_MIN_D = 9.5, MOB_MAX_D = 14.0;
+/* 三种怪：根须怪（快、弱）、石甲虫（慢、硬、冲刺）、巨岩守卫（Boss，震地） */
+var MOB_KIND = {
+  root: { hp:60,  dmg:8,  atkCd:1.1, range:1.35, speed:1.80, aggro:8.5,  scale:1.00, name:'根须怪' },
+  rock: { hp:104, dmg:12, atkCd:1.5, range:1.55, speed:1.05, aggro:6.5,  scale:1.16, name:'石甲虫' },
+  boss: { hp:420, dmg:19, atkCd:2.0, range:2.10, speed:1.45, aggro:12.0, scale:2.05, name:'巨岩守卫' }
+};
 var HIT_DMG = 22, HIT_RANGE = 2.2, HIT_CD = 0.45;
-var mobs = [], mobSpawnT = 4.0, atkCd = 0, MOB_ENABLED = true, mobHinted = false;
+var mobs = [], mobSpawnT = 4.0, atkCd = 0, MOB_ENABLED = true, mobHinted = false, mobHintedRock = false;
+var bossSpawnT = 0;
 
-function buildMob(){
+function buildMob(kind){
+  kind = kind || 'root';
+  var K = MOB_KIND[kind] || MOB_KIND.root;
+  var S = K.scale;
   var g = new THREE.Group();
-  var mat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#453730'), roughness: 1, flatShading: true });
-  var rootMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#2c231f'), roughness: 1, flatShading: true });
-  var eyeMat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#ff6a4d') });
+  var bodyCol = kind === 'rock' ? '#6b7078' : (kind === 'boss' ? '#4b3a32' : '#453730');
+  var rootCol = kind === 'rock' ? '#4a4e55' : (kind === 'boss' ? '#2f2622' : '#2c231f');
+  var eyeCol  = kind === 'rock' ? '#7fe3ff' : (kind === 'boss' ? '#ffcf6b' : '#ff6a4d');
+  var mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(bodyCol), roughness: 1, flatShading: true });
+  var rootMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(rootCol), roughness: 1, flatShading: true });
+  var eyeMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(eyeCol) });
 
-  var body = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42, 1), mat);
-  body.position.y = 0.56;
+  var body = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42 * S, 1), mat);
+  body.position.y = 0.56 * S;
   body.scale.set(1, 0.94, 1);
   g.add(body);
-  /* 树瘤：两个不规则的疙瘩，远看像块活着的木头 */
+  /* 树瘤 / 石甲：背上的疙瘩 */
   for (var b=0;b<2;b++){
-    var knot = new THREE.Mesh(new THREE.IcosahedronGeometry(0.2, 0), mat);
-    knot.position.set(b?0.28:-0.26, 0.68, b?0.1:-0.14);
+    var knot = new THREE.Mesh(new THREE.IcosahedronGeometry(0.2 * S, 0), mat);
+    knot.position.set((b?0.28:-0.26) * S, 0.68 * S, (b?0.1:-0.14) * S);
     knot.scale.set(1, 0.8, 1);
     g.add(knot);
   }
-  /* 两条红眼 */
+  /* 石甲虫：背上一排晶簇；Boss：肩甲 + 头角 */
+  if (kind === 'rock'){
+    var cryMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#9fe6f7'),
+      emissive: new THREE.Color('#1d4a55'), roughness: .35, flatShading: true });
+    for (var c=0;c<3;c++){
+      var cry = new THREE.Mesh(new THREE.ConeGeometry(0.09 * S, 0.30 * S, 5), cryMat);
+      cry.position.set((c-1) * 0.17 * S, (0.80 + (c===1?0.08:0)) * S, -0.02 * S);
+      cry.rotation.x = -0.25;
+      g.add(cry);
+    }
+  }
+  if (kind === 'boss'){
+    var plateMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#8a6440'), roughness: .95, flatShading: true });
+    for (var q=0;q<5;q++){
+      var ang = q / 5 * Math.PI * 2;
+      var plate = new THREE.Mesh(new THREE.BoxGeometry(0.30 * S, 0.16 * S, 0.20 * S), plateMat);
+      plate.position.set(Math.cos(ang) * 0.42 * S, 0.42 * S, Math.sin(ang) * 0.42 * S);
+      plate.lookAt(new V3(0, 0, 0));
+      g.add(plate);
+    }
+    for (var h=0;h<2;h++){
+      var horn = new THREE.Mesh(new THREE.ConeGeometry(0.10 * S, 0.42 * S, 5), plateMat);
+      horn.position.set((h?0.20:-0.20) * S, 0.95 * S, 0.10 * S);
+      horn.rotation.z = (h ? -0.35 : 0.35);
+      g.add(horn);
+    }
+  }
+  /* 两只眼睛 */
   for (var e=0;e<2;e++){
-    var eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 4), eyeMat);
-    eye.position.set(e?0.13:-0.13, 0.63, 0.38);
+    var eye = new THREE.Mesh(new THREE.SphereGeometry(0.045 * S, 6, 4), eyeMat);
+    eye.position.set((e?0.13:-0.13) * S, 0.63 * S, 0.38 * S);
     g.add(eye);
   }
   /* 四条根须腿，会随走路摆动 */
   var legs = [];
   for (var l=0;l<4;l++){
     var hip = new THREE.Group();
-    hip.position.set(l<2?0.22:-0.22, 0.3, l%2?0.2:-0.2);
-    var leg = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.42, 5), rootMat);
-    leg.position.y = -0.2;
+    hip.position.set((l<2?0.22:-0.22) * S, 0.3 * S, (l%2?0.2:-0.2) * S);
+    var leg = new THREE.Mesh(new THREE.ConeGeometry(0.075 * S, 0.42 * S, 5), rootMat);
+    leg.position.y = -0.2 * S;
     hip.add(leg);
     g.add(hip);
     legs.push(hip);
   }
   /* 血条：背对镜头的两块小片，始终朝向相机 */
   var barG = new THREE.Group();
-  barG.position.y = 0.97;
-  var bg = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.095),
+  barG.position.y = 0.97 * S;
+  var bw = 0.86 * S;
+  var bg = new THREE.Mesh(new THREE.PlaneGeometry(bw, 0.095 * S),
     new THREE.MeshBasicMaterial({ color: new THREE.Color('#160f0c'), transparent: true, opacity: .72, depthWrite: false }));
-  var fill = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.095),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color('#e0705a'), transparent: true, depthWrite: false }));
+  var fill = new THREE.Mesh(new THREE.PlaneGeometry(bw, 0.095 * S),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(kind==='boss' ? '#ffb14d' : '#e0705a'), transparent: true, depthWrite: false }));
   fill.position.z = 0.002;
   barG.add(bg); barG.add(fill);
   g.add(barG);
 
   scene.add(g);
-  return { group: g, mat: mat, body: body, legs: legs, barG: barG, bar: fill };
+  return { group: g, mat: mat, body: body, legs: legs, barG: barG, bar: fill, bw: bw };
 }
 
-function spawnMob(){
+function spawnMob(kind){
+  kind = kind || 'root';
+  var K = MOB_KIND[kind] || MOB_KIND.root;
   var up = null;
   for (var t=0;t<10;t++){
     var axis = new V3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5);
     axis.addScaledVector(playerUp, -axis.dot(playerUp));
     if (axis.lengthSq() < 1e-6) continue;
     axis.normalize();
-    var d = MOB_MIN_D + Math.random() * (MOB_MAX_D - MOB_MIN_D);
+    var d = (kind === 'boss' ? 12.5 : MOB_MIN_D + Math.random() * (MOB_MAX_D - MOB_MIN_D));
     var cand = stepDir(playerUp, axis, d);
     if (groundRadiusAt(cand) > 0){ up = cand; break; }
   }
   if (!up) return null;
-  var M = buildMob();
+  var M = buildMob(kind);
   var m = {
+    kind: kind, K: K,
     group: M.group, mat: M.mat, body: M.body, legs: M.legs, barG: M.barG, bar: M.bar,
-    up: up, r: groundRadiusAt(up), dir: new V3(), hp: MOB_HP, maxHp: MOB_HP,
-    phase: Math.random() * 6.28, atkCd: MOB_ATK_CD, hurt: 0, lunge: 0, dead: 0
+    bw: M.bw, baseY: 0.56 * K.scale,
+    up: up, r: groundRadiusAt(up), dir: new V3(), hp: K.hp, maxHp: K.hp,
+    phase: Math.random() * 6.28, atkCd: K.atkCd, hurt: 0, lunge: 0, dead: 0, slam: 0, slamHit: false, dash: 0
   };
   m.dir = new V3().crossVectors(m.up, new V3(0, 1, 0));
   if (m.dir.lengthSq() < 1e-6) m.dir.set(1, 0, 0);
@@ -7094,7 +7141,12 @@ function spawnMob(){
   mobs.push(m);
   m.bornD = mobDist(m);
   m.bornP = playerUp.clone();
-  if (!mobHinted){
+  if (kind === 'boss'){
+    toast('地底传来闷响——巨岩守卫醒了。它会在脚下震地，别贴太近。', 'quest');
+  } else if (kind === 'rock' && !mobHintedRock){
+    mobHintedRock = true;
+    toast('石甲虫钻出来了：比根须怪硬，会蓄力冲刺。打碎了掉矿石。');
+  } else if (kind === 'root' && !mobHinted){
     mobHinted = true;
     toast('土里拱出来一只根须怪——按 E / 右下动作键揍它。');
   }
@@ -7115,15 +7167,31 @@ function killMob(m, cause){
   if (m.dead) return;
   m.dead = 1;
   m.barG.visible = false;
-  if (cause !== 'down' && cause !== 'test'){
+  if (cause === 'down' || cause === 'test') return;
+  var kind = m.kind || 'root';
+  state.kills = (state.kills || 0) + 1;
+  if (kind === 'boss'){
+    state.inv[3] = (state.inv[3]|0) + 6;
+    state.inv[2] = (state.inv[2]|0) + 2;
+    state.dust += 15;
+    state.bossDown = 1;
+    gainXp(XP_KILL * 6);
+    toast('巨岩守卫碎了：+15 星尘、6 矿石、2 木材。它不会再醒了。', 'quest');
+  } else if (kind === 'rock'){
+    state.inv[3] = (state.inv[3]|0) + 2;
+    state.dust += 2;
+    gainXp(XP_KILL * 2);
+    toast('石甲虫碎了，捡到 2 矿石、2 星尘。');
+  } else {
     state.dust += 3;
-    state.kills = (state.kills || 0) + 1;
     gainXp(XP_KILL);
-    refreshChips();
-    persist();
     toast('根须怪散了，捡到 3 星尘。');
-    queueUnlockCheck(900);
   }
+  refreshChips();
+  if (typeof refreshInv === 'function') refreshInv();
+  if (typeof refreshCraft === 'function') refreshCraft();
+  persist();
+  queueUnlockCheck(900);
 }
 function clearMobs(cause){
   for (var i=0;i<mobs.length;i++) killMob(mobs[i], cause || 'down');
@@ -7161,10 +7229,26 @@ function attackNearby(){
 function updateMobs(dt){
   if (atkCd > 0) atkCd -= dt;
   if (MOB_ENABLED && !sunset.active && state.hp > 0){
+    /* 小怪上限只数非 Boss：Boss 不占名额 */
+    var basic = 0, hasBoss = false;
+    for (var bi=0;bi<mobs.length;bi++){
+      if (mobs[bi].dead) continue;
+      if (mobs[bi].kind === 'boss') hasBoss = true; else basic++;
+    }
     mobSpawnT -= dt;
-    if (mobSpawnT <= 0 && mobs.length < MOB_MAX){
+    if (mobSpawnT <= 0 && basic < MOB_MAX){
       mobSpawnT = MOB_SPAWN_CD;
-      spawnMob();
+      /* 打过 2 只以后，自然刷新开始混入石甲虫 */
+      var pickRock = (state.kills|0) >= 2 && Math.random() < 0.45;
+      spawnMob(pickRock ? 'rock' : 'root');
+    }
+    /* Boss：击杀满 6 只后觉醒，只出一次 */
+    if (!state.bossDown && !hasBoss){
+      if (bossSpawnT > 0) bossSpawnT -= dt;
+      if ((state.kills|0) >= 6 && bossSpawnT <= 0){
+        bossSpawnT = 20;
+        spawnMob('boss');
+      }
     }
   }
   for (var i=mobs.length-1;i>=0;i--){
@@ -7183,10 +7267,24 @@ function updateMobs(dt){
     }
     m.atkCd -= dt;
     if (m.lunge > 0) m.lunge -= dt;
+    if (m.dash > 0) m.dash -= dt;
+    if (m.barG && m.kind === 'boss'){
+      /* Boss 震地读条时，血条微微放大当预警 */
+      m.barG.scale.setScalar(m.slam > 0 ? 1.25 : 1);
+    }
 
+    var K = m.K || MOB_KIND.root;
+    var range = K.range, aggro = K.aggro;
     var d = mobDist(m);
-    var chase = d < MOB_AGGRO && d > MOB_RANGE * 0.9 && !sunset.active && state.hp > 0 && !ride.on;
-    if (!ride.on && state.hp > 0 && d > MOB_RANGE * 0.9 && d < MOB_AGGRO){
+    /* 石甲虫：慢吞吞靠近，隔一段距离蓄力冲刺一次 */
+    if (m.kind === 'rock' && !ride.on && state.hp > 0 && m.dash <= 0 &&
+        m.atkCd <= 0 && d > range * 1.2 && d < 5.5){
+      m.dash = 0.55;
+      m.atkCd = 3.0;
+      toast('石甲虫蓄力了——先闪开。');
+    }
+    var chase = d < aggro && d > range * 0.9 && !sunset.active && state.hp > 0 && !ride.on;
+    if (!ride.on && state.hp > 0 && d > range * 0.9 && d < aggro){
       var toP = new V3().copy(playerUp).addScaledVector(m.up, -playerUp.dot(m.up));
       if (toP.lengthSq() > 1e-8){
         toP.normalize();
@@ -7196,8 +7294,9 @@ function updateMobs(dt){
           if (m.dir.lengthSq() > 1e-8) m.dir.normalize();
         }
         if (chase){
-          m.up.copy(stepDir(m.up, toP, Math.min(MOB_SPEED * dt, Math.max(0, d - MOB_RANGE * 0.85))));
-          m.phase += dt * 7;
+          var spd = K.speed * (m.dash > 0 ? 2.8 : 1);
+          m.up.copy(stepDir(m.up, toP, Math.min(spd * dt, Math.max(0, d - range * 0.85))));
+          m.phase += dt * (m.dash > 0 ? 14 : 7);
         }
       }
       var gr = groundRadiusAt(m.up);
@@ -7205,13 +7304,33 @@ function updateMobs(dt){
     } else {
       m.phase += dt * 1.6;
     }
-    /* 贴脸咬人 */
-    if (!ride.on && state.hp > 0 && d <= MOB_RANGE && m.atkCd <= 0){
-      m.atkCd = MOB_ATK_CD;
+    /* Boss：贴到 4.2 米就震地，落点结算一圈伤害 */
+    if (m.kind === 'boss'){
+      if (!ride.on && state.hp > 0 && d <= 4.2 && m.atkCd <= 0 && m.slam <= 0){
+        m.slam = 0.6;
+        m.slamHit = false;
+        m.atkCd = 3.2;
+        m.lunge = 0.35;
+        spawnSparkle(m.up.clone().multiplyScalar(m.r + 0.3), m.up, 20, '#ffb14d');
+        toast('巨岩守卫抬起了脚——震地！');
+      }
+      if (m.slam > 0){
+        m.slam -= dt;
+        if (m.slam <= 0 && !m.slamHit){
+          m.slamHit = true;
+          var ringP = m.up.clone().multiplyScalar(m.r + 0.12);
+          spawnSparkle(ringP, m.up, 26, '#ffcf6b');
+          if (!ride.on && state.hp > 0 && mobDist(m) < 4.0) hurtPlayer(K.dmg + 6, 'mob');
+        }
+      }
+    }
+    /* 贴脸咬人（Boss 用震地，不咬） */
+    if (m.kind !== 'boss' && !ride.on && state.hp > 0 && d <= range && m.atkCd <= 0){
+      m.atkCd = K.atkCd;
       m.lunge = 0.3;
       var mouth = m.up.clone().multiplyScalar(m.r + 0.4);
       spawnSparkle(mouth, m.up, 10, '#ff8a6a');
-      hurtPlayer(MOB_DMG, 'mob');
+      hurtPlayer(K.dmg, 'mob');
     }
     /* 摆姿态 */
     var p = m.up.clone().multiplyScalar(m.r);
@@ -7222,18 +7341,21 @@ function updateMobs(dt){
       tmpM1.makeBasis(mx, m.up, m.dir);
       m.group.quaternion.setFromRotationMatrix(tmpM1);
     }
-    m.body.position.y = 0.56 + Math.sin(m.phase) * 0.03;
+    var bobK = K.scale || 1;
+    m.body.position.y = (m.baseY || 0.56) + Math.sin(m.phase) * 0.03 * bobK;
     m.body.rotation.z = Math.sin(m.phase * 0.5) * 0.06;
     for (var l=0;l<4;l++){
       m.legs[l].rotation.x = Math.sin(m.phase + l * 1.6) * 0.32;
     }
-    m.group.position.addScaledVector(m.up, Math.sin(m.phase * 0.5) * 0.02 + (m.lunge > 0 ? 0.05 : 0));
+    m.group.position.addScaledVector(m.up, Math.sin(m.phase * 0.5) * 0.02 + (m.lunge > 0 ? 0.05 : 0) +
+      (m.slam > 0 ? -Math.sin(m.slam / 0.6 * Math.PI) * 0.10 : 0));
     /* 血条：朝向相机、按血量缩 */
     if (m.barG){
-      m.barG.visible = d < 26;
+      m.barG.visible = d < (m.kind === 'boss' ? 40 : 26);
       m.barG.quaternion.copy(m.group.quaternion).invert().multiply(camera.quaternion);
-      m.bar.scale.x = Math.max(0.001, m.hp / m.maxHp);
-      m.bar.position.x = -(1 - m.hp / m.maxHp) * 0.43;
+      var ratio = Math.max(0.001, m.hp / m.maxHp);
+      m.bar.scale.x = ratio;
+      m.bar.position.x = -(1 - ratio) * (m.bw || 0.86) * 0.5;
     }
     if (m.hurt <= 0 && m.mat.emissive.getHex() !== 0x000000) m.mat.emissive.setHex(0x000000);
   }
@@ -7834,11 +7956,28 @@ if (/[?&]dbg=1/.test(location.search)){
     /* 战斗：读怪、强制刷怪、手动出手 */
     mobs: function(){
       return mobs.map(function(m){
-        return { up: m.up.toArray(), hp: +m.hp.toFixed(1), maxHp: m.maxHp,
+        return { kind: m.kind || 'root', up: m.up.toArray(), hp: +m.hp.toFixed(1), maxHp: m.maxHp,
                  d: +mobDist(m).toFixed(2), bornD: +(m.bornD || 0).toFixed(2),
+                 slam: +(m.slam || 0).toFixed(2), dash: +(m.dash || 0).toFixed(2),
                  playerMoved: +(m.bornP ? Math.acos(clamp(m.bornP.dot(playerUp), -1, 1)) * PLANET_R : 0).toFixed(2),
                  dead: !!m.dead };
       });
+    },
+    bossDown: function(){ return { down: state.bossDown|0, kills: state.kills|0 }; },
+    /* 直接放一只指定种类的怪到面前（测试用） */
+    spawn: function(kind, dist){
+      MOB_ENABLED = true;
+      mobSpawnT = 30;
+      var m = spawnMob(kind || 'root');
+      if (!m) return null;
+      var f = heading.clone().addScaledVector(playerUp, -heading.dot(playerUp));
+      if (f.lengthSq() < 1e-8) f.set(1, 0, 0);
+      f.normalize();
+      m.up.copy(stepDir(playerUp, f, typeof dist === 'number' ? dist : 3.2));
+      m.r = Math.max(groundRadiusAt(m.up), PLANET_R - DIG_DEPTH_MAX);
+      m.group.position.copy(m.up.clone().multiplyScalar(m.r));
+      m.atkCd = 1.2;
+      return { kind: m.kind, d: +mobDist(m).toFixed(2), hp: m.hp };
     },
     mobConst: function(){
       return { max: MOB_MAX, hp: MOB_HP, dmg: MOB_DMG, atkCd: MOB_ATK_CD, range: MOB_RANGE,
