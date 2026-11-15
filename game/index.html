@@ -945,9 +945,168 @@ var CORE_R    = PLANET_R - 5.40;      // 实心内核半径：始终留 5.10 的
 var DIG_DEPTH_MAX = PLANET_R - CORE_R - 0.30;   // 5.10：挖到内核的物理边界（17 铲），星球变大后深度不变
 var CR_R      = 0.72;   // 坑口半径：挖出来的是圆口，不是一个三角面
 var CR_PUNCH  = 0.50;   // 归一化半径小于这里 = 已经挖穿的通洞
-var craters   = [];     // 圆坑：{ c: 球面方向, d: 深度, p: 是否挖穿 }
+/* ---------------------------------------------------------------- 世界实例
+   把一颗星的地形高度场、圆坑、建造成果、地表网格、场景物件、碰撞与存档
+   收进一个 World。B-612 是第 0 号实例；world 指向当前所在星球。
+   新增星球 = new World(...) + 切换 world，不必再复制这些全局数组。 */
+function World(id, radius, opts){
+  opts = opts || {};
+  this.id = id;
+  this.radius = radius || PLANET_R;
+  this.tiles = [];
+  this.craters = [];
+  this.parts = [];
+  this.meshes = { base: null, over: null, core: null };
+  this.props = [];
+  this.root = new THREE.Group();
+  this.root.name = 'world:' + id;
+  this.spawnTable = opts.spawnTable || ['root','root','rock','root','rock'];
+  this.palette = opts.palette || null;
+  this._lastTile = -1;
+  this._lastTileDir = new V3(0,0,1);
+  /* 多星球（第七批）：每颗星自己的地标布局、主题色、资源倍率、可变状态 */
+  this.theme = opts.theme || 'sand';
+  this.oreRate = opts.oreRate || 1;
+  this.woodRate = opts.woodRate || 1;
+  this.home = opts.home || [16,-30];
+  this.spawn = opts.spawn || [32,-2];
+  this.rose = opts.rose || null;
+  this.ledge = opts.ledge || [-4,-20];
+  this.oasis = opts.oasis || null;
+  this.ash = opts.ash || null;
+  this.volc = opts.volc || [];
+  this.baob = opts.baob || [];
+  this.shard = opts.shard || [];
+  this.lamps = opts.lamps || [];
+  this.hasRose = !!opts.hasRose;
+  this.hasVolc = !!opts.hasVolc;
+  this.hasLamps = !!opts.hasLamps;
+  this.hasOasis = !!opts.hasOasis;
+  this.fogColor = opts.fogColor || '#24314b';
+  this.fogDensity = opts.fogDensity || 0.020;
+  this.tint = opts.tint || '#ffffff';
+  this.baobabLv = [];
+  this.shardsTaken = [];
+  this.pulledToday = [];
+}
+World.prototype.own = function(obj){ if (obj){ this.props.push(obj); this.root.add(obj); } return obj; };
+World.prototype.findTile = function(dir){
+  if (this._lastTile >= 0 && this._lastTileDir.dot(dir) > 0.9998) return this._lastTile;
+  var best = 0, bd = -2;
+  for (var i=0;i<this.tiles.length;i++){
+    var d = this.tiles[i].c.dot(dir);
+    if (d > bd){ bd = d; best = i; }
+  }
+  this._lastTile = best;
+  this._lastTileDir.copy(dir);
+  return best;
+};
+World.prototype.findTileExact = function(dir){
+  var best = 0, bd = -2;
+  for (var i=0;i<this.tiles.length;i++){
+    var d = this.tiles[i].c.dot(dir);
+    if (d > bd){ bd = d; best = i; }
+  }
+  return best;
+};
+World.prototype.groundRadiusAt = function(dir){
+  var T = this.tiles[this.findTile(dir)];
+  var R = this.radius;
+  var base = T.removed ? -1 : R + T.h;
+  for (var i=0;i<this.craters.length;i++){
+    var cr = this.craters[i];
+    var ang = Math.acos(clamp(dir.dot(cr.c), -1, 1)) * R;
+    if (ang >= CR_R) continue;
+    var u = ang / CR_R;
+    if (cr.p && u < CR_PUNCH) return -1;
+    var s = R - craterDepth(cr, u);
+    if (s < base) base = s;
+  }
+  for (var pi=0; pi<this.parts.length; pi++){
+    var P = this.parts[pi];
+    var pa = Math.acos(clamp(dir.dot(P.dir), -1, 1)) * R;
+    if (pa > P.r) continue;
+    var top = P.g + P.h;
+    if (top > base) base = top;
+  }
+  return base;
+};
+World.prototype.craterRadiusAt = function(cr, dir){
+  var ang = Math.acos(clamp(dir.dot(cr.c), -1, 1)) * this.radius;
+  if (ang >= CR_R) return -1;
+  var u = ang / CR_R;
+  if (cr.p && u < CR_PUNCH) return -1;
+  return this.radius - craterDepth(cr, u);
+};
+World.prototype.craterDepthUnder = function(dir){
+  var deepest = 0;
+  for (var i=0;i<this.craters.length;i++){
+    var cr = this.craters[i];
+    var ang = Math.acos(clamp(dir.dot(cr.c), -1, 1)) * this.radius;
+    if (ang >= CR_R) continue;
+    var dep = craterDepth(cr, ang / CR_R);
+    if (dep > deepest) deepest = dep;
+  }
+  return deepest;
+};
+/* 存档里的“这一颗星”切片：格式与旧版完全一致（mods/craters/built/pos） */
+World.prototype.serialize = function(pos){
+  var mods = [];
+  for (var i=0;i<this.tiles.length;i++){
+    var T = this.tiles[i];
+    if (T.h !== 0 || T.removed) mods.push([i, +T.h.toFixed(3), T.removed ? 1 : 0]);
+  }
+  return {
+    mods: mods,
+    craters: this.craters.map(function(cr){
+      return [+cr.c.x.toFixed(4), +cr.c.y.toFixed(4), +cr.c.z.toFixed(4), +cr.d.toFixed(3), cr.p ? 1 : 0];
+    }),
+    built: this.parts.map(function(P){
+      return [P.kind, +P.dir.x.toFixed(4), +P.dir.y.toFixed(4), +P.dir.z.toFixed(4), +P.g.toFixed(3)];
+    }),
+    pos: pos ? [pos.x, pos.y, pos.z] : null
+  };
+};
+World.prototype.applySave = function(sv){
+  if (Array.isArray(sv.mods)){
+    for (var i=0;i<sv.mods.length;i++){
+      var m = sv.mods[i], T = this.tiles[m[0]];
+      if (!T) continue;
+      T.h = +m[1] || 0;
+      T.removed = !!m[2];
+    }
+    markTerrain();
+  }
+  if (Array.isArray(sv.craters)){
+    this.craters.length = 0;
+    for (var ci=0;ci<sv.craters.length;ci++){
+      var c = sv.craters[ci];
+      if (!Array.isArray(c) || c.length < 4) continue;
+      var cv = new V3(+c[0] || 0, +c[1] || 0, +c[2] || 0);
+      if (cv.lengthSq() < 0.1) continue;
+      this.craters.push({ c: cv.normalize(), d: clamp(+c[3] || 0, 0, DIG_DEPTH_MAX), p: !!c[4] });
+    }
+    markTerrain();
+  }
+  return Array.isArray(sv.built) ? sv.built : [];
+};
+
+var WORLD_B612 = new World('b612', 20, {
+  spawnTable: ['root','root','rock','root','rock'],
+  theme: 'sand', oreRate: 1.0, woodRate: 1.0,
+  home:[16,-30], spawn:[32,-2], rose:[46,-23], ledge:[-4,-20], oasis:[-10,-120], ash:[-30,70],
+  volc:[[-16,74,true,1.10,0.4],[52,-100,true,1.02,1.9],[-38,-148,false,0.95,0.8]],
+  baob:[[22,-60],[-4,-110],[24,-88],[-30,60],[52,96],[-52,140],[10,170],[-62,-10],[40,-120],[5,40]],
+  shard:[[-70,-120],[-55,-40],[-30,-160],[0,-95],[12,-135],[58,-170],[70,-60],[45,120],[18,148],[-20,100],[-45,170],[62,60]],
+  lamps:[[24,18],[-8,8],[6,-62]],
+  hasRose:true, hasVolc:true, hasLamps:true, hasOasis:true,
+  fogColor:'#24314b', fogDensity:0.020, tint:'#ffffff'
+});
+var world = WORLD_B612;
+scene.add(world.root);
+var craters   = world.craters;     // 圆坑：{ c: 球面方向, d: 深度, p: 是否挖穿 }
 var tileVerts = [];
-var tiles = [];
+var tiles = world.tiles;
 var baseMesh, baseGeo, overMesh, overGeo, coreMesh;
 
 /* 稳定伪随机：给土加颗粒感，同一位置每次一样 */
@@ -1052,7 +1211,8 @@ function buildTiles(){
   baseGeo.setAttribute('color', new THREE.Float32BufferAttribute([], 3));
   baseMesh = new THREE.Mesh(baseGeo, mat);
   baseMesh.name = 'base';
-  scene.add(baseMesh);
+  world.meshes.base = baseMesh;
+  world.root.add(baseMesh);
 
   var mat2 = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, flatShading: true, side: THREE.DoubleSide });
   overGeo = new THREE.BufferGeometry();
@@ -1060,7 +1220,8 @@ function buildTiles(){
   overGeo.setAttribute('color', new THREE.Float32BufferAttribute([], 3));
   overMesh = new THREE.Mesh(overGeo, mat2);
   overMesh.name = 'over';
-  scene.add(overMesh);
+  world.meshes.over = overMesh;
+  world.root.add(overMesh);
 
   /* ---- 实心内核：挖开/挖穿看到的是更深的土，不是虚空 ---- */
   var cg = new THREE.IcosahedronGeometry(CORE_R, 3);
@@ -1084,9 +1245,173 @@ function buildTiles(){
     side: THREE.DoubleSide, emissive: new THREE.Color('#1d150e'), emissiveIntensity: 0.55
   }));
   coreMesh.name = 'core';
-  scene.add(coreMesh);
+  world.meshes.core = coreMesh;
+  world.root.add(coreMesh);
 }
 buildTiles();
+
+/* ---------------------------------------------------------------- 冰原星
+   第二颗可玩星球：同一套 World 结构，独立的地形高度 / 圆坑 / 建造 / 物件。
+   地表抬出一圈圈冰脊，植被换成冰晶柱，怪换成“霜行者”，主色调偏冷。 */
+var WORLD_ICE = new World('ice', 18, {
+  spawnTable: ['frost', 'frost', 'rock'],
+  theme: 'ice', oreRate: 0.5, woodRate: 2.1,
+  home:[14,-36], spawn:[30,-6], rose:null, ledge:[-6,-26], oasis:null, ash:null, volc:[],
+  baob:[[18,-56],[-6,-106],[28,-84],[-28,56],[48,92],[-48,136],[8,166],[-58,-16]],
+  shard:[[-66,-116],[-50,-36],[-26,-156],[4,-92],[14,-132],[56,-166],[66,-56],[40,116]],
+  lamps:[], hasRose:false, hasVolc:false, hasLamps:false, hasOasis:false,
+  fogColor:'#1f3350', fogDensity:0.016, tint:'#d8efff'
+});
+WORLD_ICE.entryDir = dirFromLatLon(30, -6);
+/* 矿星 C-433：岩层密布，挖矿倍率高，木材稀少 */
+var WORLD_C433 = new World('c433', 16, {
+  spawnTable: ['rock', 'rock', 'root', 'rock'],
+  theme: 'rock', oreRate: 2.6, woodRate: 0.3,
+  home:[12,-42], spawn:[30,-12], rose:null, ledge:[-8,-28], oasis:null, ash:[0,78], volc:[],
+  baob:[[22,-60],[-12,-102],[32,-72],[-22,52],[42,82],[-42,128]],
+  shard:[[-62,-112],[-42,-32],[8,-82],[52,-152],[62,-52],[32,108]],
+  lamps:[], hasRose:false, hasVolc:false, hasLamps:false, hasOasis:false,
+  fogColor:'#262c3a', fogDensity:0.022, tint:'#b8b0a6'
+});
+WORLD_C433.entryDir = dirFromLatLon(30, -12);
+var ALL_WORLDS = [WORLD_B612, WORLD_ICE, WORLD_C433];
+function worldById(id){
+  for (var i=0;i<ALL_WORLDS.length;i++) if (ALL_WORLDS[i].id === id) return ALL_WORLDS[i];
+  return null;
+}
+(function buildIceWorld(){
+  for (var i=0;i<WORLD_B612.tiles.length;i++){
+    var T = WORLD_B612.tiles[i];
+    var v = T.c.x * 3.1 + T.c.y * 5.7 + T.c.z * 7.3;
+    var h = 0;
+    if (Math.sin(v * 2.1) > 0.84) h = 0.26 + 0.20 * Math.sin(v * 3.3);
+    WORLD_ICE.tiles.push({
+      v: T.v.slice(), c: T.c.clone(), col: T.col.clone(),
+      h: h, removed: false, nbr: T.nbr ? T.nbr.slice() : []
+    });
+  }
+  scene.add(WORLD_ICE.root);
+  WORLD_ICE.root.visible = false;
+
+  /* 冰晶柱：不用碰撞，纯地貌标识，数量控制在移动端扛得住的量级 */
+  var cryGeo = new THREE.ConeGeometry(0.15, 1.25, 5);
+  cryGeo.translate(0, 0.62, 0);
+  var cryMat = new THREE.MeshStandardMaterial({
+    color: '#c9ecff', emissive: '#2f6f96', emissiveIntensity: 0.55,
+    roughness: 0.24, metalness: 0.12, flatShading: true
+  });
+  var N = 110;
+  var inst = new THREE.InstancedMesh(cryGeo, cryMat, N);
+  var mtx = new THREE.Matrix4(), q = new THREE.Quaternion();
+  var upY = new V3(0,1,0), sc = new V3(), pos = new V3();
+  for (var k=0;k<N;k++){
+    var a = k * 2.399963, b = Math.asin((k / N) * 1.7 - 0.85);
+    var dir = new V3(Math.cos(a) * Math.cos(b), Math.sin(b), Math.sin(a) * Math.cos(b)).normalize();
+    var r = WORLD_ICE.radius + (WORLD_ICE.tiles[WORLD_ICE.findTileExact(dir)].h || 0) + 0.02;
+    var s = 0.55 + ((k * 37) % 11) / 11 * 0.9;
+    q.setFromUnitVectors(upY, dir);
+    sc.set(1, s, 1);
+    pos.copy(dir).multiplyScalar(r);
+    mtx.compose(pos, q, sc);
+    inst.setMatrixAt(k, mtx);
+  }
+  inst.instanceMatrix.needsUpdate = true;
+  WORLD_ICE.root.add(inst);
+  WORLD_ICE.crystals = inst;
+
+  /* 两边的星门：相同的圆环，一眼能认出来 */
+  function gateMesh(color){
+    var g = new THREE.Group();
+    var torus = new THREE.Mesh(
+      new THREE.TorusGeometry(1.05, 0.075, 8, 28),
+      new THREE.MeshStandardMaterial({ color: color, emissive: color, emissiveIntensity: 0.7, roughness: 0.3 })
+    );
+    torus.rotation.x = Math.PI / 2;
+    torus.position.y = 1.0;
+    g.add(torus);
+    var ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.55, 0.95, 28),
+      new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.06;
+    g.add(ring);
+    return g;
+  }
+  WORLD_B612.gateDir = new V3(-0.55, 0.72, 0.42).normalize();
+  var g1 = gateMesh('#9fd8ff');
+  g1.position.copy(WORLD_B612.gateDir).multiplyScalar(groundRadiusAt(WORLD_B612.gateDir));
+  g1.quaternion.setFromUnitVectors(new V3(0,1,0), WORLD_B612.gateDir);
+  WORLD_B612.root.add(g1);
+  var g2 = gateMesh('#d9b8ff');
+  var iceR = WORLD_ICE.radius + (WORLD_ICE.tiles[WORLD_ICE.findTileExact(WORLD_ICE.entryDir)].h || 0);
+  g2.position.copy(WORLD_ICE.entryDir).multiplyScalar(iceR);
+  g2.quaternion.setFromUnitVectors(new V3(0,1,0), WORLD_ICE.entryDir);
+  WORLD_ICE.root.add(g2);
+  WORLD_ICE.meshes = WORLD_B612.meshes;   /* 两星共用一套地表渲染网格，数据各自独立 */
+})();
+
+/* ---------------------------------------------------------------- 矿星 C-433
+   第三颗可玩星球：岩层嶙峋，矿石富集。地表有碎石垄，怪物以石甲虫为主。 */
+(function buildRockyWorld(){
+  for (var i=0;i<WORLD_B612.tiles.length;i++){
+    var T = WORLD_B612.tiles[i];
+    var v = T.c.x * 4.2 + T.c.y * 1.7 + T.c.z * 6.1;
+    var h = 0;
+    var n = Math.sin(v * 2.7);
+    if (n > 0.78) h = 0.18 + 0.22 * (n - 0.78);
+    else if (n < -0.82) h = -0.12 - 0.16 * (-n - 0.82);
+    WORLD_C433.tiles.push({
+      v: T.v.slice(), c: T.c.clone(), col: T.col.clone(),
+      h: h, removed: false, nbr: T.nbr ? T.nbr.slice() : []
+    });
+  }
+  scene.add(WORLD_C433.root);
+  WORLD_C433.root.visible = false;
+
+  /* 碎石柱：灰岩质感，纯地貌装饰，无碰撞 */
+  var rockGeo = new THREE.ConeGeometry(0.18, 1.1, 6);
+  rockGeo.translate(0, 0.55, 0);
+  var rockMat = new THREE.MeshStandardMaterial({
+    color: '#8a8278', roughness: 0.95, metalness: 0.05, flatShading: true
+  });
+  var N = 90;
+  var inst = new THREE.InstancedMesh(rockGeo, rockMat, N);
+  var mtx = new THREE.Matrix4(), q = new THREE.Quaternion();
+  var upY = new V3(0,1,0), sc = new V3(), pos = new V3();
+  for (var k=0;k<N;k++){
+    var a = k * 2.399963 + 0.7, b = Math.asin((k / N) * 1.8 - 0.9);
+    var dir = new V3(Math.cos(a) * Math.cos(b), Math.sin(b), Math.sin(a) * Math.cos(b)).normalize();
+    var r = WORLD_C433.radius + (WORLD_C433.tiles[WORLD_C433.findTileExact(dir)].h || 0) + 0.02;
+    var s = 0.6 + ((k * 29) % 13) / 13 * 0.8;
+    q.setFromUnitVectors(upY, dir);
+    sc.set(1, s, 1);
+    pos.copy(dir).multiplyScalar(r);
+    mtx.compose(pos, q, sc);
+    inst.setMatrixAt(k, mtx);
+  }
+  inst.instanceMatrix.needsUpdate = true;
+  WORLD_C433.root.add(inst);
+  WORLD_C433.crystals = inst;
+
+  /* C-433 的星门 */
+  var g = new THREE.Group();
+  var torus = new THREE.Mesh(
+    new THREE.TorusGeometry(1.05, 0.075, 8, 28),
+    new THREE.MeshStandardMaterial({ color: '#ffd9a0', emissive: '#ffd9a0', emissiveIntensity: 0.7, roughness: 0.3 })
+  );
+  torus.rotation.x = Math.PI / 2; torus.position.y = 1.0; g.add(torus);
+  var ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.55, 0.95, 28),
+    new THREE.MeshBasicMaterial({ color: '#ffd9a0', transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2; ring.position.y = 0.06; g.add(ring);
+  var cR = WORLD_C433.radius + (WORLD_C433.tiles[WORLD_C433.findTileExact(WORLD_C433.entryDir)].h || 0);
+  g.position.copy(WORLD_C433.entryDir).multiplyScalar(cR);
+  g.quaternion.setFromUnitVectors(new V3(0,1,0), WORLD_C433.entryDir);
+  WORLD_C433.root.add(g);
+  WORLD_C433.meshes = WORLD_B612.meshes;   /* 共用地表网格 */
+})();
 
 var soilTmp = new THREE.Color();
 /* 土层：越深颜色越沉、越暗，挖开能看出层 */
@@ -1466,27 +1791,9 @@ function reseatPlanted(){
   }
 }
 
-var _lastTile = -1, _lastTileDir = new V3(0,0,1);
-function findTile(dir){
-  if (_lastTile >= 0 && _lastTileDir.dot(dir) > 0.9998) return _lastTile;
-  var best = 0, bd = -2;
-  for (var i=0;i<tiles.length;i++){
-    var d = tiles[i].c.dot(dir);
-    if (d > bd){ bd = d; best = i; }
-  }
-  _lastTile = best;
-  _lastTileDir.copy(dir);
-  return best;
-}
-/* 不吃缓存的精确查格：机位兜底不能因为缓存停在上一格上 */
-function findTileExact(dir){
-  var best = 0, bd = -2;
-  for (var i=0;i<tiles.length;i++){
-    var d = tiles[i].c.dot(dir);
-    if (d > bd){ bd = d; best = i; }
-  }
-  return best;
-}
+/* 地形查询全部转交给当前 World 实例，B-612 与其它星球共用同一套逻辑 */
+function findTile(dir){ return world.findTile(dir); }
+function findTileExact(dir){ return world.findTileExact(dir); }
 /* 这一方向上“土的最高点”：含自身和三邻格，避免站在格边时算漏掉旁边的土柱 */
 function camSoilTopAt(dir){
   var i = findTileExact(dir);
@@ -1515,52 +1822,13 @@ function craterDepth(cr, u){
 }
 
 /* 脚下地表的半径；挖穿（没有支撑）返回 -1 */
-function groundRadiusAt(dir){
-  var T = tiles[findTile(dir)];
-  var base = T.removed ? -1 : PLANET_R + T.h;
-  for (var i=0;i<craters.length;i++){
-    var cr = craters[i];
-    var ang = Math.acos(clamp(dir.dot(cr.c), -1, 1)) * PLANET_R;
-    if (ang >= CR_R) continue;
-    var u = ang / CR_R;
-    if (cr.p && u < CR_PUNCH) return -1;              /* 挖穿的通洞 */
-    var s = PLANET_R - craterDepth(cr, u);            /* 平底 + 收口坑壁 */
-    if (s < base) base = s;
-  }
-  /* 造出来的石阶/土墙/木桥：踩得上去，也挡得住人 */
-  if (typeof PARTS !== 'undefined' && PARTS.length && base > 0){
-    for (var pi=0; pi<PARTS.length; pi++){
-      var P = PARTS[pi];
-      var pa = Math.acos(clamp(dir.dot(P.dir), -1, 1)) * PLANET_R;
-      if (pa > P.r) continue;
-      var top = P.g + P.h;
-      if (top > base) base = top;
-    }
-  }
-  return base;
-}
+function groundRadiusAt(dir){ return world.groundRadiusAt(dir); }
 
 /* 圆坑表面：返回该方向的坑面半径（负数 = 通洞） */
-function craterRadiusAt(cr, dir){
-  var ang = Math.acos(clamp(dir.dot(cr.c), -1, 1)) * PLANET_R;
-  if (ang >= CR_R) return -1;
-  var u = ang / CR_R;
-  if (cr.p && u < CR_PUNCH) return -1;
-  return PLANET_R - craterDepth(cr, u);
-}
+function craterRadiusAt(cr, dir){ return world.craterRadiusAt(cr, dir); }
 
 /* 脚下这处圆坑有多深（挖穿也算），给“坑内自动抬机位”用 */
-function craterDepthUnder(dir){
-  var deepest = 0;
-  for (var i=0;i<craters.length;i++){
-    var cr = craters[i];
-    var ang = Math.acos(clamp(dir.dot(cr.c), -1, 1)) * PLANET_R;
-    if (ang >= CR_R) continue;
-    var dep = craterDepth(cr, ang / CR_R);
-    if (dep > deepest) deepest = dep;
-  }
-  return deepest;
-}
+function craterDepthUnder(dir){ return world.craterDepthUnder(dir); }
 
 /* 镜头专用的地表半径：挖穿的通洞 / 挖空的瓦片对镜头算“有盖”，
    否则镜头会顺着洞钻进星体内部，看到整屏地形背面。 */
@@ -1655,7 +1923,7 @@ terrainDirty = false;
     })
   );
   atmo.renderOrder = -5;
-  scene.add(atmo);
+  world.root.add(atmo);
 })();
 
 /* ---------------------------------------------------------------- 草丛 / 碎石（实例化，控制绘制次数） */
@@ -2431,11 +2699,13 @@ var sheep = {
    角色和小羊都走 collideSolids()，贴着表面推出去 = 自然绕行。 */
 var solids = [];
 function addSolid(dir, offset, h, r0, r1, kind, ref){
-  solids.push({
+  var s = {
     c: dir.clone().multiplyScalar(PLANET_R + offset),
     up: dir.clone(), h: h, r0: r0, r1: r1,
-    kind: kind || '', ref: ref || null
-  });
+    kind: kind || '', ref: ref || null, w: null
+  };
+  solids.push(s);
+  return s;
 }
 function solidRadiusAt(s, y){
   var t = clamp(y / s.h, 0, 1);
@@ -2446,6 +2716,8 @@ function collideSolids(pos, radius, ignoreSheep){
   var hit = false;
   for (var i=0;i<solids.length;i++){
     var s = solids[i];
+    /* 跨星不串：只属于另一颗星的建造物不参与本星碰撞 */
+    if (s.w && s.w !== world) continue;
     var up = s.up, cx = s.c.x, cy = s.c.y, cz = s.c.z;
     if (s.kind === 'baobab' && !s.ref.alive) continue;
     if (s.kind === 'sheep'){
@@ -3580,6 +3852,17 @@ Object.keys(rigs).forEach(function(k){
   princeRoot.add(rigs[k].group);
 });
 var activeRig = rigs.prince;
+/* B-612 的场景物件统一收进 World.root：根节点在原点，视觉与坐标完全不变，
+   但从此“这一颗星的物件”有了归属，切星时整组可见性可一次收起。 */
+(function gatherB612Props(){
+  var kids = scene.children.slice();
+  for (var i=0;i<kids.length;i++){
+    var o = kids[i];
+    if (o === world.root || o === WORLD_ICE.root || o.isLight || o.isPoints) continue;
+    if (o === sky || o === sunSprite || o === sunHalo) continue;
+    world.own(o);
+  }
+})();
 scene.add(princeRoot);
 
 /* ---- 角色表 / 换装定义 ---- */
@@ -3868,6 +4151,7 @@ var state = {
   placed: 0,
   punched: false,
   fell: false,
+  planet: 0,          /* 0 = B-612，1 = 冰原星 */
   mods: [],
   char: 'prince',
   outfits: {},
@@ -4075,26 +4359,23 @@ try {
       state.lampDone = sv.lampDone|0;
       if (Array.isArray(sv.unlocked)) state.unlocked = sv.unlocked.filter(function(id){ return !!unlockDef(id); });
       if (Array.isArray(sv.qClaimed)) state.qClaimed = sv.qClaimed.filter(function(id){ return typeof id === 'string'; });
-      /* 恢复挖填过的地形 */
-      if (Array.isArray(sv.mods)){
-        sv.mods.forEach(function(m){
-          var T = tiles[m[0]];
-          if (!T) return;
-          T.h = +m[1] || 0;
-          T.removed = !!m[2];
-        });
-        markTerrain();
+      /* 地形 / 圆坑 / 玩家位置全部交给 World 恢复（旧字段格式不变） */
+      WORLD_B612.applySave(sv);
+      state.planet = clamp(sv.planet|0, 0, ALL_WORLDS.length - 1);
+      if (sv.p2 && WORLD_ICE) state._builtIce = WORLD_ICE.applySave(sv.p2);
+      else state._builtIce = [];
+      if (sv.p3 && WORLD_C433) WORLD_C433.applySave(sv.p3);
+      /* 恢复各星球的地标可变状态（猴面包树等级 / 碎片 / 今日拔树） */
+      if (sv._wLand){
+        var _wl = sv._wLand;
+        if (_wl.b612){ WORLD_B612.baobabLv = _wl.b612.baobabLv || []; WORLD_B612.shardsTaken = _wl.b612.shardsTaken || []; WORLD_B612.pulledToday = _wl.b612.pulledToday || []; }
+        if (_wl.ice){ WORLD_ICE.baobabLv = _wl.ice.baobabLv || []; WORLD_ICE.shardsTaken = _wl.ice.shardsTaken || []; WORLD_ICE.pulledToday = _wl.ice.pulledToday || []; }
+        if (_wl.c433){ WORLD_C433.baobabLv = _wl.c433.baobabLv || []; WORLD_C433.shardsTaken = _wl.c433.shardsTaken || []; WORLD_C433.pulledToday = _wl.c433.pulledToday || []; }
       }
-      /* 恢复圆坑 */
-      if (Array.isArray(sv.craters)){
-        sv.craters.forEach(function(c){
-          if (!Array.isArray(c) || c.length < 4) return;
-          var cv = new V3(+c[0] || 0, +c[1] || 0, +c[2] || 0);
-          if (cv.lengthSq() < 0.1) return;
-          craters.push({ c: cv.normalize(), d: clamp(+c[3] || 0, 0, DIG_DEPTH_MAX), p: !!c[4] });
-        });
-        markTerrain();
-      }
+      /* B-612 启动时的地标状态从它自己的存档读 */
+      state.baobabLv = WORLD_B612.baobabLv.slice();
+      state.shards = WORLD_B612.shardsTaken.slice();
+      state.pulledToday = WORLD_B612.pulledToday.slice();
     }
   }
 } catch(e){}
@@ -4114,11 +4395,10 @@ for (var _bi=0;_bi<baobabs.length;_bi++){
 
 function persist(){
   try {
-    var mods = [];
-    for (var i=0;i<tiles.length;i++){
-      var T = tiles[i];
-      if (T.h !== 0 || T.removed) mods.push([i, +T.h.toFixed(3), T.removed ? 1 : 0]);
-    }
+    /* 存档按 World 分层：mods/craters/built/pos 全部由当前星球实例产出，
+       旧存档字段名与格式不变，B-612 读档行为保持原样。 */
+    var _ws = WORLD_B612.serialize(null);
+    var _p2 = (typeof WORLD_ICE !== 'undefined' && WORLD_ICE) ? WORLD_ICE.serialize(null) : null;
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       v: 9,
       day: state.day, sunsets: state.sunsets,
@@ -4139,18 +4419,29 @@ function persist(){
       parts: state.parts,
       gear: state.gear, gearOwn: state.gearOwn, codex: state.codex,
       weapon: state.weapon, weaponOwn: state.weaponOwn,
-      built: (typeof PARTS !== 'undefined' ? PARTS.map(function(P){
-        return [P.kind, +P.dir.x.toFixed(4), +P.dir.y.toFixed(4), +P.dir.z.toFixed(4), +P.g.toFixed(3)];
-      }) : []),
+      built: _ws.built,
       digs: state.digs, placed: state.placed,
       punched: state.punched, fell: state.fell,
-      mods: mods,
-      craters: craters.map(function(cr){
-        return [+cr.c.x.toFixed(4), +cr.c.y.toFixed(4), +cr.c.z.toFixed(4), +cr.d.toFixed(3), cr.p ? 1 : 0];
-      }),
+      mods: _ws.mods,
+      craters: _ws.craters,
+      planet: state.planet|0,
+      p2: _p2,
       pos: [playerUp.x, playerUp.y, playerUp.z]
     }));
   } catch(e){}
+}
+
+/* 刷新后按存档里的 planet 直接落回对应星球（此时玩家坐标尚未初始化，
+   只切数据与可见性、染色，落点稍后由 state.pos 还原）。 */
+if (state.planet === 1 && WORLD_ICE){
+  WORLD_B612.root.visible = false;
+  world = WORLD_ICE;
+  tiles = world.tiles; craters = world.craters; PARTS = world.parts;
+  world.root.visible = true;
+  if (baseMesh && baseMesh.material) baseMesh.material.color.set('#d8efff');
+  if (overMesh && overMesh.material) overMesh.material.color.set('#c4e2f2');
+  if (coreMesh && coreMesh.material) coreMesh.material.color.set('#9fc4d8');
+  if (scene.fog && scene.fog.color){ scene.fog.color.set('#9cc4de'); scene.fog.density = 0.016; }
 }
 
 /* ---------------------------------------------------------------- 状态 */
@@ -4614,7 +4905,7 @@ var RECIPES = [
   { id:'bridge', name:'木桥', cost:[0,0,2,2], h:0.18, w:1.45, d:0.66, color:'#a9793f',
     desc:'铺在坑口上的桥板' }
 ];
-var PARTS = [];   /* 已造出来的物件：{ kind, dir, h, r, g, mesh } */
+var PARTS = world.parts;   /* 已造出来的物件：{ kind, dir, h, r, g, mesh } */
 var _partMats = {};
 
 function craftCostText(cost){
@@ -4653,9 +4944,9 @@ function buildPart(ri){
   if (craterNear(dir, CR_R*0.55)){ toast('坑口上放不稳，先填平或者换个地方。'); return false; }
 
   var up = dir.clone().normalize();
-  var mesh = spawnPartMesh(ri, up, g);
+  var mesh = spawnPartMesh(ri, up, g, world);
   var r = Math.max(def.w, def.d) * 0.56;
-  addSolid(up, 0, def.h, r, r, 'part', null);
+  addSolid(up, 0, def.h, r, r, 'part', null).w = world;
   PARTS.push({ kind: ri, dir: up.clone(), h: def.h, r: r, g: g, mesh: mesh });
   state.parts[ri]--;
   state.placed++;
@@ -4668,13 +4959,13 @@ function buildPart(ri){
   persist();
   return true;
 }
-function spawnPartMesh(ri, up, g){
+function spawnPartMesh(ri, up, g, w){
   var def = RECIPES[ri];
   var mesh = new THREE.Mesh(new THREE.BoxGeometry(def.w, def.h, def.d), _partMat(def));
   mesh.position.copy(up).multiplyScalar(g + def.h/2 - 0.015);
   mesh.quaternion.setFromUnitVectors(new V3(0,1,0), up);
   mesh.castShadow = true;
-  scene.add(mesh);
+  (w || world).root.add(mesh);
   return mesh;
 }
 function _partMat(def){
@@ -4763,21 +5054,25 @@ function toggleCraft(on){
   if (btn) btn.addEventListener('click', function(){ toggleCraft(); });
   var x = document.getElementById('craftClose');
   if (x) x.addEventListener('click', function(){ toggleCraft(false); });
-  /* 把存档里建好的物件重新生成出来 */
-  var pend = state._builtPending || [];
-  for (var i=0;i<pend.length;i++){
-    var b = pend[i];
-    if (!b || b.length < 5 || !RECIPES[b[0]|0]) continue;
-    var up = new V3(+b[1], +b[2], +b[3]);
-    if (up.lengthSq() < 1e-6) continue;
-    up.normalize();
-    var def = RECIPES[b[0]|0];
-    var g = +b[4] || PLANET_R;
-    var mesh = spawnPartMesh(b[0]|0, up, g);
-    var r = Math.max(def.w, def.d) * 0.56;
-    addSolid(up, 0, def.h, r, r, 'part', null);
-    PARTS.push({ kind: b[0]|0, dir: up.clone(), h: def.h, r: r, g: g, mesh: mesh });
+  /* 把存档里建好的物件重新生成出来（两颗星各自恢复到自己那一份） */
+  function _restoreBuilt(w, list){
+    if (!w || !Array.isArray(list)) return;
+    for (var i=0;i<list.length;i++){
+      var b = list[i];
+      if (!b || b.length < 5 || !RECIPES[b[0]|0]) continue;
+      var up = new V3(+b[1], +b[2], +b[3]);
+      if (up.lengthSq() < 1e-6) continue;
+      up.normalize();
+      var def = RECIPES[b[0]|0];
+      var g = +b[4] || PLANET_R;
+      var mesh = spawnPartMesh(b[0]|0, up, g, w);
+      var r = Math.max(def.w, def.d) * 0.56;
+      addSolid(up, 0, def.h, r, r, 'part', null).w = w;
+      w.parts.push({ kind: b[0]|0, dir: up.clone(), h: def.h, r: r, g: g, mesh: mesh });
+    }
   }
+  _restoreBuilt(WORLD_B612, state._builtPending || []);
+  _restoreBuilt(WORLD_ICE, state._builtIce || []);
   refreshCraft();
 })();
 
@@ -5952,9 +6247,9 @@ function netApplyPart(kind, u, g){
   if (crafterNear(up, 0.6)) return false;
   var def = RECIPES[kind|0];
   var gg = +g || PLANET_R;
-  var mesh = spawnPartMesh(kind|0, up, gg);
+  var mesh = spawnPartMesh(kind|0, up, gg, world);
   var r = Math.max(def.w, def.d) * 0.56;
-  addSolid(up, 0, def.h, r, r, 'part', null);
+  addSolid(up, 0, def.h, r, r, 'part', null).w = world;
   PARTS.push({ kind: kind|0, dir: up.clone(), h: def.h, r: r, g: gg, mesh: mesh });
   return true;
 }
@@ -7579,6 +7874,146 @@ function updateWarp(dt){
   }
 }
 
+/* ---------------------------------------------------------------- 星门
+   同一个入口走两颗星：切换 World 实例，地形/圆坑/建造/物件/怪物全部换一套。
+   B-612 是默认星，存档里的 planet 决定刷新后落在哪一颗。 */
+function worldName(w){
+  if (w === WORLD_ICE) return '冰原 F-718';
+  if (w === WORLD_C433) return '矿星 C-433';
+  return 'B-612';
+}
+function updateGateBtn(){
+  if (!gateBtn) return;
+  /* 星门按钮：循环切到下一颗星球 */
+  var idx = ALL_WORLDS.indexOf(world);
+  var next = ALL_WORLDS[(idx + 1) % ALL_WORLDS.length];
+  gateBtn.textContent = '⇄ 前往 ' + worldName(next);
+}
+
+/* 保存当前星球的地标可变状态（猴面包树等级、碎片是否拾取、今天拔过哪些树） */
+function saveWorldLandmarkState(){
+  world.baobabLv = baobabLvList();
+  world.shardsTaken = shards.map(function(s){ return s.taken ? 1 : 0; });
+  world.pulledToday = state.pulledToday.slice();
+}
+
+function goWorld(w, opts){
+  opts = opts || {};
+  if (!w || w === world) return false;
+  /* 1) 存当前星球的地标状态 + 隐藏当前世界与已建物件 */
+  saveWorldLandmarkState();
+  for (var i=0;i<PARTS.length;i++){ if (PARTS[i].mesh) PARTS[i].mesh.visible = false; }
+  world.root.visible = false;
+
+  /* 2) 切换到目标星球的数据 */
+  world = w;
+  tiles = w.tiles;
+  craters = w.craters;
+  PARTS = w.parts;
+  world.root.visible = true;
+  for (var j=0;j<PARTS.length;j++){ if (PARTS[j].mesh) PARTS[j].mesh.visible = true; }
+
+  /* 3) 换半径与派生常量 */
+  PLANET_R = w.radius;
+  CORE_R = PLANET_R - 5.40;
+  DIG_DEPTH_MAX = PLANET_R - CORE_R - 0.30;
+  _COS_IN = Math.cos((CR_R * 0.985) / PLANET_R);
+
+  /* 4) 换方向常量与主题 */
+  applyPlanetDirs(w);
+  applyPlanetTheme(w);
+
+  /* 5) 重摆地标 */
+  repositionStaticLandmarks(w);
+
+  /* 6) 重建 solids（不含 parts；parts 已在 scene 里，只切可见性） */
+  rebuildSolidsForPlanet(w);
+
+  /* 7) 恢复目标星球的猴面包树等级 / 拔树状态 / 碎片 */
+  for (var bi=0; bi<baobabs.length; bi++){
+    var b = baobabs[bi];
+    if (bi >= w.baob.length){ b.alive = false; b.root.visible = false; applyBaobabScale(b, false); continue; }
+    b.lv = (w.baobabLv && w.baobabLv[bi] !== undefined) ? (w.baobabLv[bi]|0) : 0;
+    var pulled = w.pulledToday && w.pulledToday.indexOf(bi) >= 0;
+    b.alive = !pulled; b.root.visible = !pulled;
+    applyBaobabScale(b, false);
+  }
+  for (var si=0; si<shards.length; si++){
+    if (si >= w.shard.length){ shards[si].taken = true; shards[si].group.visible = false; continue; }
+    var taken = w.shardsTaken && w.shardsTaken[si] ? 1 : 0;
+    shards[si].taken = !!taken;
+    shards[si].group.visible = !taken;
+  }
+  if (w.hasLamps) lampApplyMask(state.lamps|0);
+  else for (var li=0; li<lamps.length; li++){ lamps[li].on = false; lamps[li].grp.visible = false; }
+
+  /* 同步全局 state 里的可变标记 */
+  state.shards = shards.map(function(s){ return s.taken ? 1 : 0; });
+  state.baobabLv = baobabLvList();
+  state.pulledToday = w.pulledToday ? w.pulledToday.slice() : [];
+  state.planet = ALL_WORLDS.indexOf(w);
+
+  /* 8) 重建地形网格（半径/数据都变了） */
+  terrainDirty = true;
+  rebuildBase(); rebuildOverlay(); updateTufts(); reseatPlanted(); terrainDirty = false;
+
+  /* 9) 重建 interactables */
+  rebuildInteractablesForPlanet();
+
+  /* 10) 清除骑乘、小怪，复位玩家到目标星球星门旁 */
+  if (ride.on){ ride.on = false; rideMoving = false; ghost.visible = false; }
+  clearMobs('switch');
+  var d = (w.entryDir || HOME_DIR).clone();
+  var gR = groundRadiusAt(d);
+  if (gR < 0){ d.copy(findLandingDir(d)); gR = groundRadiusAt(d); }
+  playerUp.copy(d);
+  playerR = gR < 0 ? PLANET_R : gR;
+  playerPos.copy(playerUp).multiplyScalar(playerR);
+  falling = false; playerVR = 0; fallCam = false;
+  snapHeadingToUp();
+  heading.copy(tmpV1.set(0,0,1).applyQuaternion(headingQ)).normalize();
+  camF.copy(heading).addScaledVector(playerUp, -heading.dot(playerUp));
+  if (camF.lengthSq() < 1e-6) camF.set(0,0,1).cross(playerUp).normalize();
+  camPitch = 0.3;
+  camera.position.copy(playerPos).addScaledVector(playerUp, 2.4).addScaledVector(camF, -camDist*0.6);
+
+  /* 11) 同步 + 提示 */
+  NET.full = true;
+  netSend(true);
+  netWorld({ t:'world', q:'req' });
+  ringPulse(w.theme === 'ice' ? '#bfe9ff' : (w.theme === 'rock' ? '#ffd9a0' : '#ffd27a'), 0.4, 4.2, 0.9);
+  spawnSparkle(playerPos.clone(), playerUp, 18, w.theme === 'ice' ? '#cfefff' : (w.theme === 'rock' ? '#ffe0b0' : '#ffd27a'));
+  updateGateBtn();
+  refreshPlanetBtn();
+  if (!opts.silent){
+    toast('抵达 ' + worldName(w) + '。');
+    persist();
+    refreshChips();
+  }
+  return true;
+}
+
+var gateBtn = null;
+(function mountGate(){
+  if (typeof document === 'undefined' || !document.body) return;
+  gateBtn = document.createElement('button');
+  gateBtn.id = 'gateBtn';
+  gateBtn.type = 'button';
+  gateBtn.style.cssText = 'position:fixed;left:calc(env(safe-area-inset-left,0px) + 12px);' +
+    'bottom:calc(env(safe-area-inset-bottom,0px) + 96px);z-index:7;padding:9px 13px;' +
+    'border-radius:999px;border:1px solid rgba(190,230,255,.42);' +
+    'background:rgba(12,22,38,.62);color:#d9f1ff;font:13px/1 "Songti SC","STSong",serif;' +
+    'letter-spacing:.5px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);' +
+    'touch-action:manipulation;cursor:pointer;';
+  gateBtn.addEventListener('click', function(ev){
+    ev.preventDefault();
+    ev.stopPropagation();
+    goWorld(world === WORLD_ICE ? WORLD_B612 : WORLD_ICE);
+  });
+  document.body.appendChild(gateBtn);
+  updateGateBtn();
+})();
+
 /* 站在地表：贴地、能迈上一层台阶；没有支撑就掉下去 */
 function updatePlayerGround(dt){
   if (warp.on) return;   /* 传送过渡期间冻结落地/坠落判定 */
@@ -7629,6 +8064,8 @@ var MOB_SPEED = 1.8, MOB_AGGRO = 8.5, MOB_SPAWN_CD = 6.0, MOB_MIN_D = 9.5, MOB_M
 var MOB_KIND = {
   root: { hp:60,  dmg:8,  atkCd:1.1, range:1.35, speed:1.80, aggro:8.5,  scale:1.00, name:'根须怪' },
   rock: { hp:104, dmg:12, atkCd:1.5, range:1.55, speed:1.05, aggro:6.5,  scale:1.16, name:'石甲虫' },
+  frost:{ hp:88,  dmg:14, atkCd:1.25,range:1.45, speed:2.05, aggro:9.0,  scale:1.05, name:'霜行者',
+          body:'#6f8ea6', root:'#48657c', eye:'#c9feff', crystal:'#d8f6ff' },
   boss: { hp:420, dmg:19, atkCd:2.0, range:2.10, speed:1.45, aggro:12.0, scale:2.05, name:'巨岩守卫' }
 };
 var HIT_DMG = 22, HIT_RANGE = 2.2, HIT_CD = 0.45;
@@ -7640,9 +8077,9 @@ function buildMob(kind){
   var K = MOB_KIND[kind] || MOB_KIND.root;
   var S = K.scale;
   var g = new THREE.Group();
-  var bodyCol = kind === 'rock' ? '#6b7078' : (kind === 'boss' ? '#4b3a32' : '#453730');
-  var rootCol = kind === 'rock' ? '#4a4e55' : (kind === 'boss' ? '#2f2622' : '#2c231f');
-  var eyeCol  = kind === 'rock' ? '#7fe3ff' : (kind === 'boss' ? '#ffcf6b' : '#ff6a4d');
+  var bodyCol = K.body || (kind === 'rock' ? '#6b7078' : (kind === 'boss' ? '#4b3a32' : '#453730'));
+  var rootCol = K.root || (kind === 'rock' ? '#4a4e55' : (kind === 'boss' ? '#2f2622' : '#2c231f'));
+  var eyeCol  = K.eye  || (kind === 'rock' ? '#7fe3ff' : (kind === 'boss' ? '#ffcf6b' : '#ff6a4d'));
   var mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(bodyCol), roughness: 1, flatShading: true });
   var rootMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(rootCol), roughness: 1, flatShading: true });
   var eyeMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(eyeCol) });
@@ -7659,8 +8096,8 @@ function buildMob(kind){
     g.add(knot);
   }
   /* 石甲虫：背上一排晶簇；Boss：肩甲 + 头角 */
-  if (kind === 'rock'){
-    var cryMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#9fe6f7'),
+  if (kind === 'rock' || kind === 'frost'){
+    var cryMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(K.crystal || '#9fe6f7'),
       emissive: new THREE.Color('#1d4a55'), roughness: .35, flatShading: true });
     for (var c=0;c<3;c++){
       var cry = new THREE.Mesh(new THREE.ConeGeometry(0.09 * S, 0.30 * S, 5), cryMat);
@@ -7864,12 +8301,17 @@ function updateMobs(dt){
     mobSpawnT -= dt;
     if (mobSpawnT <= 0 && basic < MOB_MAX){
       mobSpawnT = MOB_SPAWN_CD;
-      /* 打过 2 只以后，自然刷新开始混入石甲虫 */
-      var pickRock = (state.kills|0) >= 2 && Math.random() < 0.45;
-      spawnMob(pickRock ? 'rock' : 'root');
+      /* B-612 保持原来的刷新规则；其它星球按自己的 spawnTable 出怪 */
+      if (world === WORLD_B612){
+        var pickRock = (state.kills|0) >= 2 && Math.random() < 0.45;
+        spawnMob(pickRock ? 'rock' : 'root');
+      } else {
+        var tb = world.spawnTable || ['root'];
+        spawnMob(tb[Math.floor(Math.random() * tb.length)]);
+      }
     }
-    /* Boss：击杀满 6 只后觉醒，只出一次 */
-    if (!state.bossDown && !hasBoss){
+    /* Boss 只在 B-612 觉醒，冰原星不抢它的戏 */
+    if (world === WORLD_B612 && !state.bossDown && !hasBoss){
       if (bossSpawnT > 0) bossSpawnT -= dt;
       if ((state.kills|0) >= 6 && bossSpawnT <= 0){
         bossSpawnT = 20;
@@ -8448,9 +8890,22 @@ if (/[?&]dbg=1/.test(location.search)){
     },
     lampLight: function(i){ return lightLamp(lamps[i|0], true); },
     near: function(){ return nearTarget ? { type: nearTarget.type, label: nearTarget.label } : null; },
-    warp: function(){
-      return { on: warp.on, t: +warp.t.toFixed(3), done: warp.done,
-               opacity: warpEl.style.opacity, bg: warpEl.style.background };
+    /* 多星球（第七批）：当前实例、两颗星的数据规模与星门传送 */
+    planet: function(){
+      return {
+        id: world.id, planet: state.planet|0,
+        tiles: world.tiles.length, craters: world.craters.length, parts: world.parts.length,
+        props: world.props.length, rootKids: world.root.children.length,
+        visible: world.root.visible,
+        b612Visible: WORLD_B612.root.visible, iceVisible: WORLD_ICE.root.visible,
+        gateBtn: gateBtn ? gateBtn.textContent : null,
+        spawnTable: world.spawnTable, fog: scene.fog ? scene.fog.color.getHexString() : null
+      };
+    },
+    travel: function(to){
+      var target = to === 'ice' ? WORLD_ICE : (to === 'b612' ? WORLD_B612 : null);
+      var ok = target ? goWorld(target) : false;
+      return { ok: ok, id: world.id, up: playerUp.toArray(), r: +playerR.toFixed(2) };
     },
     tileDetail: function(){ return TILE_DETAIL; },
     triCount: function(){ return tiles.length; },
