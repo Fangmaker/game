@@ -144,6 +144,12 @@
     text-shadow:0 1px 8px rgba(0,0,0,.7);
   }
 
+  /* ---------- 对跖点传送过渡 ---------- */
+  #warp{
+    position:fixed;inset:0;background:#000;opacity:0;
+    pointer-events:none;z-index:30;
+  }
+
   /* ---------- 摇杆 ---------- */
   #joy{
     position:fixed;
@@ -504,6 +510,7 @@
 <body>
 <canvas id="scene"></canvas>
 <div id="vignette"></div>
+<div id="warp"></div>
 
 <div id="compass">
   <svg viewBox="0 0 54 54">
@@ -7321,8 +7328,61 @@ function findLandingDir(u){
   return u.clone();
 }
 
+/* 对跖点传送过渡：渐黑 → 换面 → 闪白 → 淡出，避免 180° 硬切 */
+var warpEl = document.getElementById('warp');
+var warp = { on:false, t:0, dur:1.05, done:false };
+function startWarp(){
+  if (warp.on) return;
+  warp.on = true; warp.t = 0; warp.done = false;
+  falling = false; playerVR = 0;
+  warpEl.style.background = '#000';
+  warpEl.style.opacity = '0';
+}
+function warpTeleport(){
+  playerUp.copy(findLandingDir(playerUp.clone().negate()));
+  snapHeadingToUp();
+  /* 直接贴在新地面的实际高度上，避免 0.5 的二次跌落触发 falling */
+  var lg = groundRadiusAt(playerUp);
+  playerR = Math.max(lg, PLANET_R - DIG_DEPTH_MAX) + 0.04;
+  playerVR = 0; falling = false; fallCam = false;
+  state.fell = true;
+  var cp = playerUp.clone().multiplyScalar(playerR);
+  spawnSparkle(cp.clone(), playerUp, 16, '#cfe4ff');
+  /* 镜头立刻搬到新位置，避免穿过球体 */
+  var nf = new V3().copy(heading).addScaledVector(playerUp, -heading.dot(playerUp));
+  if (nf.lengthSq() < 1e-6) nf.set(0,1,0).cross(playerUp);
+  nf.normalize();
+  camF.copy(nf);
+  camera.position.copy(cp).addScaledVector(playerUp, 2.4).addScaledVector(nf, -3.4);
+  persist();
+}
+function updateWarp(dt){
+  if (!warp.on) return;
+  warp.t += dt;
+  var p = warp.t / warp.dur;
+  if (p < 0.34){
+    warpEl.style.opacity = (p / 0.34).toFixed(3);
+  } else if (p < 0.46){
+    warpEl.style.opacity = '1';
+    if (!warp.done){ warp.done = true; warpTeleport(); }
+  } else if (p < 0.56){
+    warpEl.style.background = '#fff';
+    warpEl.style.opacity = '1';
+  } else if (p < 1){
+    warpEl.style.opacity = (1 - (p - 0.56) / 0.44).toFixed(3);
+  } else {
+    warp.on = false;
+    warpEl.style.opacity = '0';
+    warpEl.style.background = '#000';
+    toast('穿过星球，从另一头落了出来。');
+    /* 让「穿过星球」的提示先说完，再结算任务奖励 */
+    setTimeout(refreshQuests, 1600);
+  }
+}
+
 /* 站在地表：贴地、能迈上一层台阶；没有支撑就掉下去 */
 function updatePlayerGround(dt){
+  if (warp.on) return;   /* 传送过渡期间冻结落地/坠落判定 */
   var gR = groundRadiusAt(playerUp);
   if (gR < 0){
     falling = true;
@@ -7352,26 +7412,8 @@ function updatePlayerGround(dt){
       if (new V3(0,1,0).applyQuaternion(headingQ).dot(playerUp) < 0.98) snapHeadingToUp();
       spawnDust(playerUp.clone().multiplyScalar(playerR), playerUp);
     } else if (playerR < CORE_R + 0.9){
-      /* 挖穿掉下去：落到内核前从星球另一头出来，不落进虚空 */
-      playerUp.copy(findLandingDir(playerUp.clone().negate()));
-      snapHeadingToUp();
-      /* 直接贴在新地面的实际高度上，避免 0.5 的二次跌落触发 falling */
-      var lg = groundRadiusAt(playerUp);
-      playerR = Math.max(lg, PLANET_R - DIG_DEPTH_MAX) + 0.04;
-      playerVR = 0; falling = false;
-      state.fell = true;
-      var cp = playerUp.clone().multiplyScalar(playerR);
-      spawnSparkle(cp, playerUp, 16, '#cfe4ff');
-      toast('穿过星球，从另一头落了出来。');
-      /* 镜头立刻搬到新位置，避免穿过球体 */
-      var nf = new V3().copy(heading).addScaledVector(playerUp, -heading.dot(playerUp));
-      if (nf.lengthSq() < 1e-6) nf.set(0,1,0).cross(playerUp);
-      nf.normalize();
-      camF.copy(nf);
-      camera.position.copy(cp).addScaledVector(playerUp, 2.4).addScaledVector(nf, -3.4);
-      persist();
-      /* 让「穿过星球」的提示先说完，再结算任务奖励 */
-      setTimeout(refreshQuests, 1600);
+      /* 挖穿掉下去：先黑屏，换到星球另一头后再闪白淡出，不做 180° 硬切 */
+      startWarp();
     }
   }
   if (!falling){ fallCam = false; }
@@ -7763,7 +7805,7 @@ function updatePlanet(dt){
     rideMove.copy(move);
     rideMoving = moving;
   } else {
-    if (moving && !falling){
+    if (moving && !falling && !warp.on){
       /* 解析式球面推进：up' = normalize(up·cosθ + moveDir·sinθ) */
       /* 蛇被动「阴凉」：钻到坑里 / 洞里比平地快 25% */
       var snakeIn = (activeRig.kind === 'snake' && playerR < PLANET_R - 0.25) ? 1.25 : 1;
@@ -8117,6 +8159,7 @@ function tick(){
   }
   updateSunset(dt);
   updatePlanet(dt);
+  updateWarp(dt);
   netTick(dt);
   updateSkills(dt);
   updateFx(dt);
@@ -8184,6 +8227,10 @@ if (/[?&]dbg=1/.test(location.search)){
     },
     lampLight: function(i){ return lightLamp(lamps[i|0], true); },
     near: function(){ return nearTarget ? { type: nearTarget.type, label: nearTarget.label } : null; },
+    warp: function(){
+      return { on: warp.on, t: +warp.t.toFixed(3), done: warp.done,
+               opacity: warpEl.style.opacity, bg: warpEl.style.background };
+    },
     tileDetail: function(){ return TILE_DETAIL; },
     triCount: function(){ return tiles.length; },
     tile: function(){
