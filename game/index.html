@@ -1823,6 +1823,23 @@ var gardenFlowers = [];
 
 /* ---------------------------------------------------------------- 猴面包树苗 */
 var baobabs = [];
+var BAOB_MAX_LV = 4;
+var BAOB_LV_K = [0.55, 0.80, 1.06, 1.36, 1.72];   /* 0..4 级对应的整体尺寸倍率 */
+function baobabBaseScale(lv){ return 1.25 * BAOB_LV_K[clamp(lv|0, 0, BAOB_MAX_LV)]; }
+function applyBaobabScale(b, smooth){
+  b.tscale = baobabBaseScale(b.lv);
+  if (!smooth) b.root.scale.setScalar(b.tscale);
+}
+function baobabMaxLv(){
+  var m = 0;
+  for (var i=0;i<baobabs.length;i++) if (baobabs[i].alive && baobabs[i].lv > m) m = baobabs[i].lv;
+  return m;
+}
+function baobabLvList(){
+  var out = [];
+  for (var i=0;i<baobabs.length;i++) out.push(baobabs[i].lv|0);
+  return out;
+}
 (function makeBaobabs(){
   var trunkMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#8a6a4e'), roughness: 1, flatShading: true });
   var leafMat  = new THREE.MeshStandardMaterial({ color: new THREE.Color('#7d9153'), roughness: 1, flatShading: true });
@@ -1840,12 +1857,13 @@ var baobabs = [];
     }
     var root = new THREE.Group();
     root.add(g);
-    root.scale.setScalar(1.25);
+    root.scale.setScalar(baobabBaseScale(0));
     standOn(root, dirFromLatLon(sp[0], sp[1]), -0.02, Math.random()*6.28);
     root.visible = false;
     g.scale.setScalar(0.0001);
     scene.add(root);
-    baobabs.push({ root: root, inner: g, alive: false, anim: 0, grow: 1, pos: root.position.clone() });
+    baobabs.push({ root: root, inner: g, alive: false, anim: 0, grow: 1, lv: 0,
+                   tscale: baobabBaseScale(0), pos: root.position.clone() });
   });
 })();
 
@@ -3497,6 +3515,8 @@ var state = {
   water: 6,
   dust: 0,
   treesPulled: 0,
+  treesMatured: 0,
+  baobabLv: [],
   pulledToday: [],
   shards: [],
   sheepFriend: false,
@@ -3598,7 +3618,7 @@ try {
   var raw = localStorage.getItem(SAVE_KEY);
   if (raw){
     var sv = JSON.parse(raw);
-    if (sv && (sv.v >= 2 && sv.v <= 8)){
+    if (sv && (sv.v >= 2 && sv.v <= 9)){
       hadSave = true;
       state.day = sv.day || 1;
       state.sunsets = sv.sunsets || 0;
@@ -3607,6 +3627,8 @@ try {
       state.water = sv.water === undefined ? WATER_MAX : clamp(sv.water|0, 0, WATER_MAX);
       state.dust = sv.dust|0;
       state.treesPulled = sv.treesPulled|0;
+      state.treesMatured = sv.treesMatured|0;
+      state.baobabLv = Array.isArray(sv.baobabLv) ? sv.baobabLv : [];
       state.pulledToday = Array.isArray(sv.pulledToday) ? sv.pulledToday : [];
       state.shards = Array.isArray(sv.shards) ? sv.shards : [];
       state.sheepFriend = !!sv.sheepFriend;
@@ -3659,6 +3681,12 @@ for (var _ui=0;_ui<UNLOCK_DEFS.length;_ui++){
 }
 if (!isUnlocked(state.char)) state.char = 'prince';
 
+/* 把存档里的猴面包树等级套回今天的树苗（等级跨天保留） */
+for (var _bi=0;_bi<baobabs.length;_bi++){
+  baobabs[_bi].lv = clamp(state.baobabLv[_bi]|0, 0, BAOB_MAX_LV);
+  applyBaobabScale(baobabs[_bi], false);
+}
+
 function persist(){
   try {
     var mods = [];
@@ -3667,13 +3695,15 @@ function persist(){
       if (T.h !== 0 || T.removed) mods.push([i, +T.h.toFixed(3), T.removed ? 1 : 0]);
     }
     localStorage.setItem(SAVE_KEY, JSON.stringify({
-      v: 8,
+      v: 9,
       day: state.day, sunsets: state.sunsets,
       hp: +state.hp.toFixed(1), thirst: +state.thirst.toFixed(1), stam: +state.stam.toFixed(1),
       kills: state.kills|0, lv: state.lv, xp: +state.xp.toFixed(1),
       roseStage: state.roseStage, garden: state.garden,
       water: state.water, dust: state.dust,
       treesPulled: state.treesPulled,
+      treesMatured: state.treesMatured|0,
+      baobabLv: baobabLvList(),
       pulledToday: state.pulledToday,
       shards: state.shards,
       sheepFriend: state.sheepFriend,
@@ -3963,7 +3993,9 @@ function findNear(){
     var bd = playerPos.distanceTo(b.pos);
     if (bd < 2.4 && bd < bestD){
       bestD = bd;
-      best = { type:'baobab', obj: b.root, label:'拔掉', icon:'pull', radius: 2.4, pos: b.pos, ref: b };
+      var _grown = (b.lv|0) >= BAOB_MAX_LV;
+      best = { type:'baobab', obj: b.root, label: _grown ? '拔掉' : '浇水',
+               icon: _grown ? 'pull' : 'water', radius: 2.4, pos: b.pos, ref: b };
     }
   }
   /* 小羊：没交朋友时“叫它”，交了朋友就能骑 */
@@ -4333,15 +4365,38 @@ function doAction(){
   else if (nearTarget.type === 'baobab'){
     var b = nearTarget.ref;
     if (!b.alive) return;
+    var bi = baobabs.indexOf(b);
+    var upB = b.pos.clone().normalize();
+    if ((b.lv|0) < BAOB_MAX_LV){
+      /* 浇水长大：每浇一次大一圈，长满后才允许拔掉 */
+      if (state.water <= 0){ toast('水壶空了，先去井边或水塘打水。'); return; }
+      state.water--;
+      b.lv = clamp((b.lv|0) + 1, 0, BAOB_MAX_LV);
+      if (bi >= 0) state.baobabLv[bi] = b.lv;
+      applyBaobabScale(b, true);
+      spawnDroplets(b.pos.clone().addScaledVector(upB, 0.35 * b.tscale), upB);
+      spawnSparkle(b.pos.clone().addScaledVector(upB, 0.7 * b.tscale), upB, 6, '#cfe8a8');
+      refreshChips();
+      netWorldTreeWater(bi, b.lv);
+      if (b.lv >= BAOB_MAX_LV){
+        state.treesMatured = (state.treesMatured|0) + 1;
+        state.dust += 3;
+        toast('猴面包树长成了，抖落 3 星尘。现在可以拔掉。', 'quest');
+        refreshQuests();
+      } else {
+        toast('浇了水，树苗长大了（' + b.lv + '/' + BAOB_MAX_LV + '）。');
+      }
+      persist();
+      return;
+    }
     b.alive = false;
     b.anim = 0.0001;
     treeCount++;
     state.treesPulled++;
-    state.dust += 1;
-    var bi = baobabs.indexOf(b);
+    state.dust += 2;
     if (bi >= 0 && state.pulledToday.indexOf(bi) < 0) state.pulledToday.push(bi);
-    spawnDust(b.pos.clone(), b.pos.clone().normalize());
-    toast('拔掉了一棵猴面包树苗。+1 星尘');
+    spawnDust(b.pos.clone(), upB);
+    toast('拔掉了一棵长成的猴面包树。+2 星尘');
     refreshChips();
     refreshQuests();
     netWorldTree(bi);       /* 对方那棵也一起消失 */
@@ -4463,10 +4518,11 @@ function resetDayTrees(instant){
       b.grow = instant ? 1 : 0;
       b.root.visible = true;
       b.inner.scale.setScalar(instant ? 1 : 0.0001);
+      applyBaobabScale(b, false);
     } else if (on && pulled){
       b.alive = false;
       b.root.visible = false;
-      b.root.scale.setScalar(1.25);
+      applyBaobabScale(b, false);
     } else if (!on && b.alive){
       b.alive = false;
       b.root.visible = false;
@@ -4492,9 +4548,8 @@ var QDEFS = [
   { id:'garden', label:'在玫瑰旁种花',     dust:8,  xp:30, when:function(){ return state.garden >= GARDEN_N; } },
   { id:'dig',    label:'挖穿脚下的星球',   dust:5,  xp:40, when:function(){ return !!state.punched; } },
   { id:'place',  label:'把挖出来的土盖回去', dust:3, xp:15, when:function(){ return state.placed >= 3; } },
-  { id:'trees',  label:'拔掉今天的树苗',   dust:3,  xp:15, when:function(){
-      for (var i=0;i<baobabs.length;i++) if (baobabs[i].alive) return false;
-      return baobabs.length > 0;
+  { id:'trees',  label:'把猴面包树浇到成熟', dust:4,  xp:20, when:function(){
+      return (state.treesMatured|0) >= 1;
     } },
   { id:'shards', label:'收齐十二枚星光',   dust:20, xp:60, when:function(){
       if (!shards.length) return false;
@@ -4547,12 +4602,11 @@ function refreshQuests(){
     items.push({ id:'garden', done:true, html:'玫瑰开满了' });
   }
 
-  var aliveTrees = 0;
-  for (var i=0;i<baobabs.length;i++) if (baobabs[i].alive) aliveTrees++;
-  if (aliveTrees > 0){
-    items.push({ id:'trees', done:false, html:'拔掉猴面包树苗 <b>' + (treesForDay(state.day) - aliveTrees) + '/' + treesForDay(state.day) + '</b>' });
+  var mxLv = baobabMaxLv();
+  if ((state.treesMatured|0) < 1){
+    items.push({ id:'trees', done:false, html:'把猴面包树浇到成熟 <b>' + mxLv + '/' + BAOB_MAX_LV + '</b>' });
   } else {
-    items.push({ id:'trees', done:true, html:'今天的树苗拔干净了' });
+    items.push({ id:'trees', done:true, html:'猴面包树长成了' });
   }
 
   var got = 0;
@@ -4862,6 +4916,7 @@ function worldSnapshot(){
     }),
     tl: mods,
     bb: state.pulledToday.slice(),
+    bl: baobabLvList(),
     rs: state.roseStage, gd: state.garden
   };
 }
@@ -4883,6 +4938,7 @@ function netWorldTile(i){
   return netWorld({ t:'world', q:'t', i:i, h:+T.h.toFixed(3), r: T.removed ? 1 : 0 });
 }
 function netWorldTree(i){ return netWorld({ t:'world', q:'p', i:i }); }
+function netWorldTreeWater(i, lv){ return netWorld({ t:'world', q:'w', i:i, lv:lv|0 }); }
 function netWorldGarden(){ return netWorld({ t:'world', q:'g', rs: state.roseStage, gd: state.garden }); }
 
 var _wv = new V3();
@@ -4919,6 +4975,24 @@ function netApplyTree(i){
   refreshQuests();
   persist();
 }
+/* 对方浇水的进度：把树直接放到对应等级，并补上它这一天该在的位置 */
+function netApplyTreeLv(i, lv){
+  i = i | 0;
+  if (i < 0 || i >= baobabs.length) return false;
+  var b = baobabs[i];
+  var n = clamp(lv|0, 0, BAOB_MAX_LV);
+  if (n === (b.lv|0)) return false;
+  b.lv = n;
+  if (!b.alive && state.pulledToday.indexOf(i) < 0){
+    b.alive = true;
+    b.root.visible = true;
+    b.grow = 1;
+    b.inner.scale.setScalar(1);
+  }
+  state.baobabLv[i] = n;
+  applyBaobabScale(b, true);
+  return true;
+}
 function netApplyWorld(m){
   if (!m || m.q === 'req') return;
   var dirty = false;
@@ -4934,6 +5008,7 @@ function netApplyWorld(m){
       if (T.h !== h || T.removed !== rm){ T.h = h; T.removed = rm; dirty = true; }
     });
     if (Array.isArray(m.bb)) m.bb.forEach(function(i){ netApplyTree(i); });
+    if (Array.isArray(m.bl)) m.bl.forEach(function(lv, i){ if (netApplyTreeLv(i, lv)) dirty = true; });
     if (typeof m.rs === 'number' && m.rs > state.roseStage){ applyRoseStage(m.rs, true); dirty = true; }
     if (typeof m.gd === 'number' && m.gd > state.garden){ applyGarden(m.gd, true); dirty = true; }
   } else if (m.q === 'c'){
@@ -4946,6 +5021,8 @@ function netApplyWorld(m){
     }
   } else if (m.q === 'p'){
     netApplyTree(m.i);
+  } else if (m.q === 'w'){
+    if (netApplyTreeLv(m.i, m.lv)) dirty = true;
   } else if (m.q === 'g'){
     if (typeof m.rs === 'number' && m.rs > state.roseStage){ applyRoseStage(m.rs, true); dirty = true; }
     if (typeof m.gd === 'number' && m.gd > state.garden){ applyGarden(m.gd, true); dirty = true; }
@@ -6903,6 +6980,12 @@ function updatePlanet(dt){
       b.inner.scale.setScalar(Math.max(0.0001, ge));
       b.inner.rotation.z = (1-ge) * -0.4;
     }
+    /* 浇水长大时整棵树平滑放大，别一帧跳变 */
+    var _cs = b.root.scale.x;
+    if (Math.abs(_cs - b.tscale) > 0.001){
+      var _ns = damp(_cs, b.tscale, 7, dt);
+      b.root.scale.setScalar(_ns);
+    }
     if (!b.alive && b.anim > 0){
       b.anim += dt;
       var t = clamp(b.anim/0.4, 0, 1);
@@ -7213,6 +7296,12 @@ if (/[?&]dbg=1/.test(location.search)){
     },
     xp: function(n){ gainXp(n); return { lv: state.lv, xp: +state.xp.toFixed(1) }; },
     /* 任务 / 角色解锁：验收用 */
+    baobabs: function(){
+      return baobabs.map(function(b, i){
+        return { i:i, lv:b.lv|0, alive:!!b.alive, scale:+b.root.scale.x.toFixed(3),
+                 lat:BAOB_SPOTS[i][0], lon:BAOB_SPOTS[i][1], tscale:+b.tscale.toFixed(3) };
+      });
+    },
     quests: function(){
       return QDEFS.map(function(d){
         return { id: d.id, label: d.label, done: d.when(), claimed: qClaimed(d.id),
