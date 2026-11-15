@@ -2459,6 +2459,84 @@ baobabs.forEach(function(b, i){
   addSolid(dirFromLatLon(BAOB_SPOTS[i][0], BAOB_SPOTS[i][1]), -0.02, 1.35, 0.25, 0.20, 'baobab', b);
 });
 
+/* ---------------------------------------------------------------- 星灯（第五批：联机共同目标）
+   三盏灯散在出生点周围；点灯消耗 1 星尘，进度通过联机同步，两端都能看到亮了几盏。 */
+var LAMP_DIRS = [dirFromLatLon(24, 18), dirFromLatLon(-8, 8), dirFromLatLon(6, -62)];
+var lamps = [];
+(function buildLamps(){
+  var postMat = new THREE.MeshStandardMaterial({ color:new THREE.Color('#6d6152'), roughness:0.88, flatShading:true });
+  var ringMat = new THREE.MeshStandardMaterial({ color:new THREE.Color('#8f8069'), roughness:0.7, flatShading:true });
+  for (var i=0;i<LAMP_DIRS.length;i++){
+    var up = LAMP_DIRS[i];
+    var g = groundRadiusAt(up);
+    if (!(g > 0)) g = PLANET_R;
+    var grp = new THREE.Group();
+    var post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.08, 1.0, 6), postMat);
+    post.position.y = 0.48; post.castShadow = true; grp.add(post);
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(0.155, 0.018, 5, 12), ringMat);
+    ring.position.y = 0.99; ring.rotation.x = Math.PI / 2; grp.add(ring);
+    var bulbMat = new THREE.MeshStandardMaterial({
+      color:new THREE.Color('#4a4636'), roughness:0.45,
+      emissive:new THREE.Color('#ffc978'), emissiveIntensity:0.05, flatShading:true
+    });
+    var bulb = new THREE.Mesh(new THREE.SphereGeometry(0.115, 8, 6), bulbMat);
+    bulb.position.y = 1.01; bulb.castShadow = true; grp.add(bulb);
+    var glow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map:glowTex, color:0xffd39a, transparent:true, opacity:0, depthWrite:false
+    }));
+    glow.scale.set(1.5, 1.5, 1); glow.position.y = 1.01; grp.add(glow);
+    grp.position.copy(up).multiplyScalar(g - 0.01);
+    grp.quaternion.setFromUnitVectors(new V3(0,1,0), up);
+    scene.add(grp);
+    lamps.push({ i:i, dir:up.clone(), g:g, grp:grp, bulbMat:bulbMat, glow:glow, on:false });
+  }
+})();
+function lampCount(){
+  var n = 0;
+  for (var i=0;i<lamps.length;i++) if (lamps[i].on) n++;
+  return n;
+}
+/* 只改外观，不发奖、不弹提示（读档 / 收远端同步时用） */
+function applyLampLit(L){
+  if (!L || L.on) return;
+  L.on = true;
+  L.bulbMat.color.setHex(0xffe3ab);
+  L.bulbMat.emissiveIntensity = 1.5;
+  L.glow.material.opacity = 0.8;
+}
+function lampApplyMask(mask){
+  for (var i=0;i<lamps.length;i++) if ((mask >> i) & 1) applyLampLit(lamps[i]);
+}
+function lightLamp(L, byMe){
+  if (!L || L.on) return false;
+  if (byMe){
+    if ((state.dust|0) < 1){ toast('点星灯要 1 星尘，先去捡一点。'); return false; }
+    state.dust -= 1;
+    refreshChips();
+  }
+  applyLampLit(L);
+  spawnSparkle(L.grp.position.clone().addScaledVector(L.dir, 1.01), L.dir, 18, '#ffd98a');
+  state.lamps = (state.lamps|0) | (1 << L.i);
+  if (byMe){
+    netWorldLamp(L.i);
+    gainXp(6);
+    persist();
+    toast('点亮了第 ' + lampCount() + ' 盏星灯。');
+  }
+  refreshQuests();
+  if (lampCount() >= 3 && !state.lampDone){
+    state.lampDone = 1;
+    state.dust += 8;
+    gainXp(30);
+    refreshChips();
+    persist();
+    toast('三盏星灯都亮了——你和旅伴把这片夜空点起来了（+8 星尘）。', 'quest');
+  } else if (!byMe){
+    persist();   /* 远端点亮的灯，本地也要记住 */
+  }
+  return true;
+}
+
 /* ---------------------------------------------------------------- 角色 */
 function PM(hex, rough){
   return new THREE.MeshStandardMaterial({ color: new THREE.Color(hex), roughness: rough===undefined?0.9:rough, flatShading: true });
@@ -3771,6 +3849,8 @@ var state = {
   stam: 100,
   kills: 0,
   bossDown: 0,
+  lamps: 0,                 /* 星灯位掩码：两人共同点亮 3 盏 */
+  lampDone: 0,
   lv: 1,
   xp: 0,
   unlocked: ['prince'],
@@ -3916,6 +3996,8 @@ try {
       state.stam = sv.stam === undefined ? VIT_ST_MAX : clamp(+sv.stam || 0, 0, VIT_ST_MAX);
       state.kills = sv.kills|0;
       state.bossDown = sv.bossDown|0;
+      state.lamps = clamp(sv.lamps|0, 0, 7);
+      state.lampDone = sv.lampDone|0;
       if (Array.isArray(sv.unlocked)) state.unlocked = sv.unlocked.filter(function(id){ return !!unlockDef(id); });
       if (Array.isArray(sv.qClaimed)) state.qClaimed = sv.qClaimed.filter(function(id){ return typeof id === 'string'; });
       /* 恢复挖填过的地形 */
@@ -3966,7 +4048,7 @@ function persist(){
       v: 9,
       day: state.day, sunsets: state.sunsets,
       hp: +state.hp.toFixed(1), thirst: +state.thirst.toFixed(1), stam: +state.stam.toFixed(1),
-      kills: state.kills|0, bossDown: state.bossDown|0, lv: state.lv, xp: +state.xp.toFixed(1),
+      kills: state.kills|0, bossDown: state.bossDown|0, lamps: state.lamps|0, lampDone: state.lampDone|0, lv: state.lv, xp: +state.xp.toFixed(1),
       roseStage: state.roseStage, garden: state.garden,
       water: state.water, dust: state.dust,
       treesPulled: state.treesPulled,
@@ -4006,6 +4088,8 @@ var playerUp = playerPos.clone().normalize();
 var playerR = PLANET_R;
 var _startGround = groundRadiusAt(startDir);
 if (_startGround > 0) playerR = _startGround;
+/* 读档后把已经点亮的星灯恢复（第五批共同目标） */
+lampApplyMask(state.lamps|0);
 var playerVR = 0, falling = false;
 var ride = { on: false };
 var rideMove = new V3(), rideMoving = false;
@@ -4250,6 +4334,8 @@ function setActIcon(kind){
     svg.innerHTML = '<path d="M5 19 16.5 7.5"/><path d="M13.6 4.4 18 2.6l-1.8 4.4"/><path d="M18.6 9.4l1.8 2.6-3.2.2"/><path d="M9.6 19.4l-3 1.4.6-3.2"/>';
   } else if (kind === 'ride'){
     svg.innerHTML = '<path d="M4.6 17.6c2.8 0 4.2-1.6 4.2-3.8 0-1.6-1.2-2.6-2.6-2.6"/><path d="M4.2 7.4c0-1 .8-1.8 1.8-1.8"/><path d="M10.2 17.6h8"/><path d="M12.6 10.8 15.4 7.6l3.8 1"/><circle cx="19.8" cy="12.6" r="1.5"/>';
+  } else if (kind === 'lamp'){
+    svg.innerHTML = '<path d="M12 3v3"/><path d="M8.6 18.4h6.8"/><path d="M9.4 18.4l.9-8.2h3.4l.9 8.2"/><circle cx="12" cy="7.6" r="1.6"/>';
   } else {
     svg.innerHTML = '<circle cx="12" cy="13" r="4"/><path d="M12 3.6v1.6M4.4 13H2.8M21.2 13h-1.6M6.2 7.2 5.1 6.1M17.8 6.1l-1.1 1.1M6.4 20.4h11.2"/>';
   }
@@ -4280,6 +4366,16 @@ function findNear(){
     bestD = sd;
     if (sheep.friend) best = { type:'ride', label:'骑上', icon:'ride', radius: 2.9 };
     else best = { type:'sheep', label:'叫它', icon:'sheep', radius: 2.9 };
+  }
+  /* 星灯：还没点亮时可以点（共同目标） */
+  for (var li=0; li<lamps.length; li++){
+    var L = lamps[li];
+    if (L.on) continue;
+    var ld = playerPos.distanceTo(L.grp.position);
+    if (ld < 2.3 && ld < bestD){
+      bestD = ld;
+      best = { type:'lamp', label:'点灯', icon:'lamp', radius:2.3, pos:L.grp.position, ref:L };
+    }
   }
   return best;
 }
@@ -5109,6 +5205,9 @@ function doAction(){
     netWorldGarden();       /* 玫瑰阶段 / 花园朵数，对方也开 */
     persist();
   }
+  else if (nearTarget.type === 'lamp'){
+    lightLamp(nearTarget.ref, true);
+  }
   else if (nearTarget.type === 'baobab'){
     var b = nearTarget.ref;
     if (!b.alive) return;
@@ -5335,6 +5434,12 @@ function refreshQuests(){
     items.push({ id:'garden', done:true, html:'玫瑰开满了' });
   }
 
+  /* 第五批：联机共同目标——三盏星灯，进度双端可见 */
+  var _lit = lampCount();
+  items.push(_lit >= lamps.length
+    ? { id:'lamps', done:true, html:'三盏星灯都亮了' }
+    : { id:'lamps', done:false, html:'和旅伴一起点亮星灯 <b>' + _lit + '/' + lamps.length + '</b>' });
+
   var mxLv = baobabMaxLv();
   if ((state.treesMatured|0) < 1){
     items.push({ id:'trees', done:false, html:'把猴面包树浇到成熟 <b>' + Math.min(mxLv, BAOB_MAX_LV) + '/' + BAOB_MAX_LV + '</b>' });
@@ -5362,7 +5467,7 @@ function refreshQuests(){
     : { id:'place', done:true, html:'土块搭起来了' });
 
   /* 顺序：玫瑰 → 挖穿 → 盖土 → 树苗 → 星光 → 小羊，最多显示 4 条 */
-  var order = ['rose', 'garden', 'dig', 'fall', 'place', 'trees', 'shards', 'sheep'];
+  var order = ['rose', 'garden', 'lamps', 'dig', 'fall', 'place', 'trees', 'shards', 'sheep'];
   items.sort(function(a, b){ return order.indexOf(a.id) - order.indexOf(b.id); });
 
   var html = '';
@@ -5711,6 +5816,13 @@ function netApplyPart(kind, u, g){
   return true;
 }
 function netWorldGarden(){ return netWorld({ t:'world', q:'g', rs: state.roseStage, gd: state.garden }); }
+/* 星灯：只发“哪一盏亮了”，两边各自维护位掩码 */
+function netWorldLamp(i){ return netWorld({ t:'world', q:'l', i: i|0 }); }
+function netApplyLamp(i){
+  if (!(i >= 0 && i < lamps.length)) return false;
+  lightLamp(lamps[i], false);
+  return true;
+}
 
 var _wv = new V3();
 function netCraterNear(dir){
@@ -5799,6 +5911,8 @@ function netApplyWorld(m){
     if (typeof m.gd === 'number' && m.gd > state.garden){ applyGarden(m.gd, true); dirty = true; }
   } else if (m.q === 'b'){
     netApplyPart(m.k|0, m.u, m.g);
+  } else if (m.q === 'l'){
+    netApplyLamp(m.i|0);
   }
   if (dirty){
     markTerrain();          /* 下一帧重建 base + overlay，坑/土块/井口一起刷新 */
@@ -7934,6 +8048,10 @@ function updatePlanet(dt){
     }
   }
 
+  /* 星灯呼吸：点亮后光晕轻轻起伏 */
+  for (var _li=0; _li<lamps.length; _li++){
+    if (lamps[_li].on) lamps[_li].glow.material.opacity = 0.72 + Math.sin(elapsed*2.1 + _li)*0.12;
+  }
   /* 灯塔呼吸：灯光、地面光斑、扫动光束一起做出“灯在转”的感觉 */
   if (beaconLanternMat) beaconLanternMat.emissiveIntensity = 1.4 + Math.sin(elapsed*1.8)*0.25;
   if (beacon.userData.halo) beacon.userData.halo.material.opacity = 0.45 + Math.sin(elapsed*1.8)*0.12;
@@ -8051,6 +8169,21 @@ if (/[?&]dbg=1/.test(location.search)){
     r: function(){ return playerR; },
     R: function(){ return PLANET_R; },
     landmarks: function(){ return { beacon: beacon.position.toArray(), well: well.position.toArray(), pond: pond.position.toArray() }; },
+    /* 星灯（第五批） */
+    lamps: function(){
+      return {
+        count: lampCount(), done: state.lampDone|0, mask: state.lamps|0,
+        list: lamps.map(function(L){
+          return { i: L.i, on: L.on, pos: L.grp.position.toArray(), dir: L.dir.toArray() };
+        })
+      };
+    },
+    lampDir: function(i){
+      var L = lamps[i|0];
+      return L ? dirNear(L.dir, 1.25, 0).toArray() : null;
+    },
+    lampLight: function(i){ return lightLamp(lamps[i|0], true); },
+    near: function(){ return nearTarget ? { type: nearTarget.type, label: nearTarget.label } : null; },
     tileDetail: function(){ return TILE_DETAIL; },
     triCount: function(){ return tiles.length; },
     tile: function(){
