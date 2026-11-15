@@ -1918,12 +1918,28 @@ var gardenFlowers = [];
 
 /* ---------------------------------------------------------------- 猴面包树苗 */
 var baobabs = [];
-var BAOB_MAX_LV = 4;
+var BAOB_MAX_LV = 4;          /* 4 级 = 成熟线（任务用），不是生长上限 */
 var BAOB_LV_K = [0.55, 0.80, 1.06, 1.36, 1.72];   /* 0..4 级对应的整体尺寸倍率 */
-function baobabBaseScale(lv){ return 1.25 * BAOB_LV_K[clamp(lv|0, 0, BAOB_MAX_LV)]; }
+/* 成熟线以上继续长：没有硬上限，只是越往后每次长得的比例越小 */
+function baobabLvK(lv){
+  lv = Math.max(0, lv|0);
+  if (lv <= BAOB_MAX_LV) return BAOB_LV_K[lv];
+  var extra = lv - BAOB_MAX_LV;
+  return BAOB_LV_K[BAOB_MAX_LV] * Math.pow(1 + 0.14 * extra, 0.62);
+}
+function baobabBaseScale(lv){ return 1.25 * baobabLvK(lv); }
 function applyBaobabScale(b, smooth){
   b.tscale = baobabBaseScale(b.lv);
   if (!smooth) b.root.scale.setScalar(b.tscale);
+  /* 树越大，挡镜头/挡盖土的半径也跟着长 */
+  for (var i=0;i<solids.length;i++){
+    var s = solids[i];
+    if (s.kind === 'baobab' && s.ref === b){
+      s.r0 = Math.max(0.25, 0.20 * b.tscale);
+      s.h = Math.max(1.35, 0.78 * b.tscale);
+      break;
+    }
+  }
 }
 function baobabMaxLv(){
   var m = 0;
@@ -3778,7 +3794,7 @@ if (!isUnlocked(state.char)) state.char = 'prince';
 
 /* 把存档里的猴面包树等级套回今天的树苗（等级跨天保留） */
 for (var _bi=0;_bi<baobabs.length;_bi++){
-  baobabs[_bi].lv = clamp(state.baobabLv[_bi]|0, 0, BAOB_MAX_LV);
+  baobabs[_bi].lv = Math.max(0, state.baobabLv[_bi]|0);   /* 等级不封顶，跨天继续长 */
   applyBaobabScale(baobabs[_bi], false);
 }
 
@@ -4090,8 +4106,8 @@ function findNear(){
     if (bd < 2.4 && bd < bestD){
       bestD = bd;
       var _grown = (b.lv|0) >= BAOB_MAX_LV;
-      best = { type:'baobab', obj: b.root, label: _grown ? '拔掉' : '浇水',
-               icon: _grown ? 'pull' : 'water', radius: 2.4, pos: b.pos, ref: b };
+      best = { type:'baobab', obj: b.root, label:'浇水',
+               icon:'water', radius: 2.4, pos: b.pos, ref: b, grown: _grown };
     }
   }
   /* 小羊：没交朋友时“叫它”，交了朋友就能骑 */
@@ -4496,6 +4512,27 @@ function breakDome(instant){
 }
 
 /* ---------------------------------------------------------------- 动作 */
+/* 长按动作键：拔掉成熟的猴面包树（点按是浇水，两者分开，浇水不再被"拔掉"抢走） */
+function pullBaobab(b){
+  if (!b || !b.alive) return;
+  if ((b.lv|0) < BAOB_MAX_LV){ toast('还没成熟，先浇水把它养大。'); return; }
+  var bi = baobabs.indexOf(b);
+  var upB = b.pos.clone().normalize();
+  b.alive = false;
+  b.anim = 0.0001;
+  treeCount++;
+  state.treesPulled++;
+  state.dust += 2;
+  if (bi >= 0 && state.pulledToday.indexOf(bi) < 0) state.pulledToday.push(bi);
+  spawnDust(b.pos.clone(), upB);
+  toast('拔掉了一棵猴面包树。+2 星尘');
+  refreshChips();
+  refreshQuests();
+  netWorldTree(bi);       /* 对方那棵也一起消失 */
+  persist();
+  nearTarget = null;
+  actBtn.classList.remove('on');
+}
 function doAction(){
   if (sunset.active) return;
   if (attackNearby()) return;
@@ -4540,42 +4577,28 @@ function doAction(){
     if (!b.alive) return;
     var bi = baobabs.indexOf(b);
     var upB = b.pos.clone().normalize();
-    if ((b.lv|0) < BAOB_MAX_LV){
-      /* 浇水长大：每浇一次大一圈，长满后才允许拔掉 */
-      if (state.water <= 0){ toast('水壶空了，先去井边或水塘打水。'); return; }
-      state.water--;
-      b.lv = clamp((b.lv|0) + 1, 0, BAOB_MAX_LV);
-      if (bi >= 0) state.baobabLv[bi] = b.lv;
-      applyBaobabScale(b, true);
-      spawnDroplets(b.pos.clone().addScaledVector(upB, 0.35 * b.tscale), upB);
-      spawnSparkle(b.pos.clone().addScaledVector(upB, 0.7 * b.tscale), upB, 6, '#cfe8a8');
-      refreshChips();
-      netWorldTreeWater(bi, b.lv);
-      if (b.lv >= BAOB_MAX_LV){
-        state.treesMatured = (state.treesMatured|0) + 1;
-        state.dust += 3;
-        toast('猴面包树长成了，抖落 3 星尘。现在可以拔掉。', 'quest');
-        refreshQuests();
-      } else {
-        toast('浇了水，树苗长大了（' + b.lv + '/' + BAOB_MAX_LV + '）。');
-      }
-      persist();
-      return;
-    }
-    b.alive = false;
-    b.anim = 0.0001;
-    treeCount++;
-    state.treesPulled++;
-    state.dust += 2;
-    if (bi >= 0 && state.pulledToday.indexOf(bi) < 0) state.pulledToday.push(bi);
-    spawnDust(b.pos.clone(), upB);
-    toast('拔掉了一棵长成的猴面包树。+2 星尘');
+    /* 一直浇、一直长：成熟线以上不再封顶，只是长势变缓 */
+    if (state.water <= 0){ toast('水壶空了，先去井边或水塘打水。'); return; }
+    state.water--;
+    var _wasMature = (b.lv|0) >= BAOB_MAX_LV;
+    b.lv = Math.max(0, (b.lv|0) + 1);
+    if (bi >= 0) state.baobabLv[bi] = b.lv;
+    applyBaobabScale(b, true);
+    spawnDroplets(b.pos.clone().addScaledVector(upB, 0.35 * b.tscale), upB);
+    spawnSparkle(b.pos.clone().addScaledVector(upB, 0.7 * b.tscale), upB, 6, '#cfe8a8');
     refreshChips();
-    refreshQuests();
-    netWorldTree(bi);       /* 对方那棵也一起消失 */
+    netWorldTreeWater(bi, b.lv);
+    if (!_wasMature && b.lv >= BAOB_MAX_LV){
+      state.treesMatured = (state.treesMatured|0) + 1;
+      state.dust += 3;
+      toast('猴面包树长成了，抖落 3 星尘。还能继续浇，长成多大都可以。', 'quest');
+      refreshQuests();
+    } else if (b.lv > BAOB_MAX_LV){
+      toast('又长高了一截（第 ' + b.lv + ' 级，已成熟）。长按动作键可以拔掉。');
+    } else {
+      toast('浇了水，树苗长大了（' + b.lv + '/' + BAOB_MAX_LV + '）。');
+    }
     persist();
-    nearTarget = null;
-    actBtn.classList.remove('on');
   }
   else if (nearTarget.type === 'sunset'){
     if (sunset.active) return;
@@ -4777,9 +4800,9 @@ function refreshQuests(){
 
   var mxLv = baobabMaxLv();
   if ((state.treesMatured|0) < 1){
-    items.push({ id:'trees', done:false, html:'把猴面包树浇到成熟 <b>' + mxLv + '/' + BAOB_MAX_LV + '</b>' });
+    items.push({ id:'trees', done:false, html:'把猴面包树浇到成熟 <b>' + Math.min(mxLv, BAOB_MAX_LV) + '/' + BAOB_MAX_LV + '</b>' });
   } else {
-    items.push({ id:'trees', done:true, html:'猴面包树长成了' });
+    items.push({ id:'trees', done:true, html:'猴面包树长成了 <b>LV ' + mxLv + '</b>' });
   }
 
   var got = 0;
@@ -4947,7 +4970,26 @@ canvas.addEventListener('wheel', function(e){
   e.preventDefault();
 }, { passive: false });
 
-actBtn.addEventListener('click', doAction);
+/* 点按 = 浇水；长按 0.7s = 拔掉已成熟的猴面包树（触屏和鼠标都走 pointer 事件） */
+var _actHoldT = 0, _actHeld = false;
+actBtn.addEventListener('pointerdown', function(){
+  _actHeld = false;
+  clearTimeout(_actHoldT);
+  _actHoldT = setTimeout(function(){
+    if (nearTarget && nearTarget.type === 'baobab' && nearTarget.ref && nearTarget.grown){
+      _actHeld = true;
+      pullBaobab(nearTarget.ref);
+    }
+  }, 700);
+});
+function _actHoldEnd(){ clearTimeout(_actHoldT); }
+actBtn.addEventListener('pointerup', _actHoldEnd);
+actBtn.addEventListener('pointercancel', _actHoldEnd);
+actBtn.addEventListener('pointerleave', _actHoldEnd);
+actBtn.addEventListener('click', function(){
+  if (_actHeld){ _actHeld = false; return; }
+  doAction();
+});
 
 /* 角色 / 换装面板 */
 var lookEl = document.getElementById('look');
@@ -5153,7 +5195,7 @@ function netApplyTreeLv(i, lv){
   i = i | 0;
   if (i < 0 || i >= baobabs.length) return false;
   var b = baobabs[i];
-  var n = clamp(lv|0, 0, BAOB_MAX_LV);
+  var n = Math.max(0, lv|0);           /* 对方浇到多高就同步多高，没有上限 */
   if (n === (b.lv|0)) return false;
   b.lv = n;
   if (!b.alive && state.pulledToday.indexOf(i) < 0){
@@ -7429,6 +7471,30 @@ if (/[?&]dbg=1/.test(location.search)){
     dig: function(n){ for (var i=0;i<(n||1);i++) digAt(); return state.inv.slice(); },
     place: function(n){ for (var i=0;i<(n||1);i++) placeAt(); return state.inv.slice(); },
     act: function(){ doAction(); return ride.on; },
+    /* 猴面包树：读等级/尺寸，浇水走真实 doAction 路径；长按拔树 */
+    tree: function(i){
+      i = i|0;
+      if (i < 0 || i >= baobabs.length) return null;
+      var b = baobabs[i];
+      return { alive: b.alive, lv: b.lv|0, scale: +b.tscale.toFixed(3),
+               water: state.water, mature: (b.lv|0) >= BAOB_MAX_LV };
+    },
+    treeAll: function(){
+      return baobabs.map(function(b,i){ return { i: i, alive: b.alive, lv: b.lv|0,
+        scale: +b.tscale.toFixed(3) }; });
+    },
+    treeAim: function(i){
+      i = i|0;
+      if (i < 0 || i >= baobabs.length || !baobabs[i].alive) return null;
+      var u = baobabs[i].pos.clone().normalize();
+      playerUp.copy(u);
+      playerR = groundRadiusAt(u);
+      falling = false; playerVR = 0;
+      snapHeadingToUp();
+      return true;
+    },
+    treePull: function(){ if (nearTarget && nearTarget.type === 'baobab') pullBaobab(nearTarget.ref); return true; },
+    treeNear: function(){ return nearTarget ? { type: nearTarget.type, grown: !!nearTarget.grown } : null; },
     /* 生存数值：不传参读，传参直接写（测试用） */
     vitals: function(seed){
       if (seed){
