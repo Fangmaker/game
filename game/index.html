@@ -223,6 +223,25 @@
   #skill b{font-size:13px;font-weight:500;letter-spacing:.5px;color:#ffd9a0}
   #skill.cool{opacity:.92}
   #skill.cool em{opacity:.5}
+  #skill.ready{animation:skillReady 1.6s ease-in-out infinite}
+  @keyframes skillReady{
+    0%,100%{box-shadow:0 0 0 0 rgba(255,214,154,0)}
+    55%{box-shadow:0 0 18px 3px rgba(255,214,154,.42)}
+  }
+  /* 命中反馈：技能打中时在准星下方弹一行伤害 */
+  #hitBanner{
+    position:fixed;left:50%;top:54%;transform:translate(-50%,0) scale(.86);
+    font-size:17px;letter-spacing:1px;font-weight:600;
+    color:#ffd9a0;text-shadow:0 2px 12px rgba(0,0,0,.85);
+    opacity:0;pointer-events:none;z-index:8;white-space:nowrap;
+  }
+  #hitBanner.pop{animation:hitPop .95s ease-out}
+  @keyframes hitPop{
+    0%{opacity:0;transform:translate(-50%,6px) scale(.7)}
+    18%{opacity:1;transform:translate(-50%,-6px) scale(1.08)}
+    62%{opacity:1;transform:translate(-50%,-16px) scale(1)}
+    100%{opacity:0;transform:translate(-50%,-30px) scale(.96)}
+  }
   #skillRing{
     position:absolute;inset:-4px;border-radius:50%;pointer-events:none;
     -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 3px),#000 calc(100% - 2px));
@@ -664,6 +683,7 @@
   <b id="skillCd"></b>
 </button>
 
+<div id="hitBanner"></div>
 <div id="hint">WASD 行走 · 拖拽转视角 · E 互动</div>
 
 <button id="lookBtn" aria-label="角色与换装">
@@ -3841,7 +3861,8 @@ var state = {
   parts: [0, 0, 0],         /* 做好的石阶 / 土墙 / 木桥 */
   gear: { tool: 'shovel', charm: '' },   /* 已装备：镐子 / 护符 */
   gearOwn: { pick: 0, charm: 0 },        /* 已拥有的装备 */
-  codex: { mobs: {}, parts: {} },        /* 图鉴：遇见过的怪、造过的物件 */
+  weapon: '', weaponOwn: {},             /* 武器：当前装备 / 已拥有 */
+  codex: { mobs: {}, parts: {}, weapons: {} },   /* 图鉴：遇见过的怪、造过的物件、武器 */
   sel: 0,
   digs: 0,
   placed: 0,
@@ -3863,6 +3884,24 @@ var state = {
   unlocked: ['prince'],
   qClaimed: []
 };
+/* 武器（第六批）：用土/石/木/矿 + 星尘合成；装备后改伤害、射程、攻速、技能倍率。
+   定义放在读档之前，读档时 weaponDef() 才能校验存档里的武器 id。 */
+var WEAPON_DEFS = [
+  { id:'w_wood',  name:'木剑',   cost:[0,0,3,0], dust:0,  dmg:10, range:0.2, cd:-0.10, skill:1.00,
+    desc:'轻巧：攻速最快，伤害小幅提升' },
+  { id:'w_stone', name:'石斧',   cost:[0,3,1,2], dust:0,  dmg:20, range:0.3, cd:0.12,  skill:1.00, splash:1.7,
+    desc:'沉重：单击顺带劈到身边的怪' },
+  { id:'w_star',  name:'星尘杖', cost:[0,1,1,3], dust:12, dmg:8,  range:0.5, cd:0.05,  skill:1.70,
+    desc:'技能伤害 +70%，判定更远' },
+  { id:'w_bone',  name:'蛇骨鞭', cost:[0,2,0,3], dust:6,  dmg:14, range:1.4, cd:-0.06, skill:1.15,
+    desc:'长鞭：攻击距离 +1.4 米' }
+];
+function weaponDef(id){
+  for (var i=0;i<WEAPON_DEFS.length;i++) if (WEAPON_DEFS[i].id === id) return WEAPON_DEFS[i];
+  return null;
+}
+function equippedWeapon(){ return weaponDef(state.weapon); }
+
 var WATER_MAX = 6;
 /* 生存数值（第一批）：口渴线性掉落，落到 0 开始掉血；体力给挖土和后续战斗用 */
 var VIT_HP_MAX = 100, VIT_TH_MAX = 100, VIT_ST_MAX = 100;
@@ -3883,8 +3922,23 @@ var TIER_TXT = ['Ⅰ', 'Ⅱ', 'Ⅲ'];
 function xpNeed(lv){ return 24 + (lv - 1) * 16; }
 function hpMax(){ return VIT_HP_MAX + (state.lv - 1) * LV_HP_STEP; }
 function skillTier(){ return state.lv >= 7 ? 3 : (state.lv >= 4 ? 2 : 1); }
-/* 攻击力随等级涨：基础 22，每级 +3（10 级 49，两下打死一只 60 血的怪） */
-function hitDmg(){ return HIT_DMG + (state.lv - 1) * LV_DMG_STEP; }
+/* 攻击力随等级涨：基础 22，每级 +3；武器再叠加伤害 / 射程 / 攻速 */
+function hitDmg(){
+  var w = equippedWeapon();
+  return HIT_DMG + (state.lv - 1) * LV_DMG_STEP + (w && w.dmg ? w.dmg : 0);
+}
+function hitRange(){
+  var w = equippedWeapon();
+  return HIT_RANGE + (w && w.range ? w.range : 0);
+}
+function hitCd(){
+  var w = equippedWeapon();
+  return Math.max(0.18, HIT_CD + (w && w.cd ? w.cd : 0));
+}
+function skillMul(){
+  var w = equippedWeapon();
+  return w && w.skill ? w.skill : 1;
+}
 function gainXp(n){
   if (!(n > 0) || state.lv >= LV_MAX) return;
   state.xp += n;
@@ -3976,7 +4030,21 @@ try {
         state.gearOwn.pick = sv.gearOwn.pick|0 ? 1 : 0;
         state.gearOwn.charm = sv.gearOwn.charm|0 ? 1 : 0;
       }
-      state.codex = { mobs: {}, parts: {} };
+      state.weapon = '';
+      state.weaponOwn = {};
+      if (typeof sv.weapon === 'string' && weaponDef(sv.weapon)) state.weapon = sv.weapon;
+      if (sv.weaponOwn && typeof sv.weaponOwn === 'object'){
+        for (var _wk in sv.weaponOwn){
+          if (weaponDef(_wk) && sv.weaponOwn[_wk]|0) state.weaponOwn[_wk] = 1;
+        }
+      }
+      if (state.weapon && !state.weaponOwn[state.weapon]) state.weapon = '';
+      state.codex = { mobs: {}, parts: {}, weapons: {} };
+      if (sv.codex && sv.codex.weapons && typeof sv.codex.weapons === 'object'){
+        for (var _wg in sv.codex.weapons){
+          if (weaponDef(_wg) && sv.codex.weapons[_wg] > 0) state.codex.weapons[_wg] = sv.codex.weapons[_wg]|0;
+        }
+      }
       if (sv.codex && sv.codex.mobs && typeof sv.codex.mobs === 'object'){
         ['root','rock','boss'].forEach(function(k){
           if (sv.codex.mobs[k] > 0) state.codex.mobs[k] = sv.codex.mobs[k]|0;
@@ -4070,6 +4138,7 @@ function persist(){
       inv: state.inv, sel: state.sel,
       parts: state.parts,
       gear: state.gear, gearOwn: state.gearOwn, codex: state.codex,
+      weapon: state.weapon, weaponOwn: state.weaponOwn,
       built: (typeof PARTS !== 'undefined' ? PARTS.map(function(P){
         return [P.kind, +P.dir.x.toFixed(4), +P.dir.y.toFixed(4), +P.dir.z.toFixed(4), +P.g.toFixed(3)];
       }) : []),
@@ -4764,10 +4833,40 @@ function equipGear(id){
   refreshBag(); persist();
   toast(G.name + (gearEquipped(id) ? '带上了：' + G.desc + '。' : '收回行囊。'));
 }
+/* 武器：合成 / 装备（效果立刻结算到 hitDmg / hitRange / hitCd / skillMul） */
+function weaponCostText(W){ return gearCostText(W); }
+function canWeapon(id){
+  var W = weaponDef(id);
+  if (!W || state.weaponOwn[id]) return false;
+  for (var i=0;i<4;i++) if ((state.inv[i]|0) < W.cost[i]) return false;
+  if (W.dust && (state.dust|0) < W.dust) return false;
+  return true;
+}
+function craftWeapon(id){
+  var W = weaponDef(id);
+  if (!W || state.weaponOwn[id]) return;
+  if (!canWeapon(id)){ toast('材料不够，先去挖点矿、攒点星尘。'); return false; }
+  for (var i=0;i<4;i++) state.inv[i] -= W.cost[i];
+  if (W.dust) state.dust -= W.dust;
+  state.weaponOwn[id] = 1;
+  state.weapon = id;
+  addCodex('weapon', id);
+  refreshInv(); refreshChips(); refreshBag(); refreshCraft(); persist();
+  toast('打好了' + W.name + '，已经拿在手上：' + W.desc + '。');
+  return true;
+}
+function equipWeapon(id){
+  if (!state.weaponOwn[id]){ toast('先做出来才能拿。'); return; }
+  state.weapon = state.weapon === id ? '' : id;
+  refreshBag(); persist();
+  var W = weaponDef(id);
+  toast(W.name + (state.weapon === id ? '拿在手上：' + W.desc + '。' : '收回行囊。'));
+}
 /* 图鉴：第一次遇见时落盘，之后只加计数 */
 function addCodex(kind, key){
-  if (!state.codex) state.codex = { mobs: {}, parts: {} };
-  var box = kind === 'mob' ? state.codex.mobs : state.codex.parts;
+  if (!state.codex) state.codex = { mobs: {}, parts: {}, weapons: {} };
+  if (!state.codex.weapons) state.codex.weapons = {};
+  var box = kind === 'mob' ? state.codex.mobs : (kind === 'weapon' ? state.codex.weapons : state.codex.parts);
   if (box[key] > 0) box[key]++;
   else { box[key] = 1; persist(); }
 }
@@ -4817,9 +4916,32 @@ function refreshBag(){
       }
       html += '</div>';
     }
+    html += '<div class="cxh">武器</div>';
+    for (var wi=0; wi<WEAPON_DEFS.length; wi++){
+      var W = WEAPON_DEFS[wi], wOwn = state.weaponOwn[W.id] ? 1 : 0, wEq = state.weapon === W.id;
+      var stat = '伤害 +' + W.dmg + ' · 射程 +' + W.range.toFixed(1) + ' 米 · ' +
+        (W.cd < 0 ? '攻速 +' + Math.round(-W.cd * 100) + '%' : '攻速 -' + Math.round(W.cd * 100) + '%') +
+        (W.skill !== 1 ? ' · 技能 ×' + W.skill.toFixed(2) : '') +
+        (W.splash ? ' · 顺劈 ' + W.splash.toFixed(1) + ' 米' : '');
+      html += '<div class="rc"><div><div class="nm">' + W.name + (wEq ? ' · 已装备' : '') +
+        '</div><div class="ct">' + W.desc + (wOwn ? '' : ' · 需要 ' + weaponCostText(W)) +
+        '</div><div class="ct">' + stat + '</div></div><div class="grow"></div>';
+      if (!wOwn){
+        html += '<button data-act="craftWeapon" data-wid="' + W.id + '"' +
+          (canWeapon(W.id) ? '' : ' disabled') + '>锻造</button>';
+      } else {
+        html += '<button class="b2" data-act="equipWeapon" data-wid="' + W.id + '">' +
+          (wEq ? '卸下' : '装备') + '</button>';
+      }
+      html += '</div>';
+    }
     html += '<div class="cxh">当前效果</div><div class="cx"><div class="ds">' +
       (state.gear.tool === 'pick' ? '石镐：每挖 4 铲额外敲出一块矿石' : '徒手：只有正常的出矿概率') +
       '<br>' + (state.gear.charm === 'charm' ? '护心石：战斗受伤 -20%' : '无护符：战斗伤害不减免') +
+      '<br>' + (equippedWeapon()
+        ? '武器：' + equippedWeapon().name + ' · 单击 ' + hitDmg() + ' 伤害 · 射程 ' +
+          hitRange().toFixed(1) + ' 米 · 间隔 ' + hitCd().toFixed(2) + ' 秒 · 技能 ×' + skillMul().toFixed(2)
+        : '武器：空手 · 单击 ' + hitDmg() + ' 伤害 · 射程 ' + hitRange().toFixed(1) + ' 米') +
       '</div></div>';
   } else {
     html += '<div class="cxh">怪物</div>';
@@ -4843,6 +4965,13 @@ function refreshBag(){
         (cnt ? RECIPES[q].name : '？？？') + '</div><div class="ds">' +
         (cnt ? '已造 ' + cnt + ' 次' : '还没造过') + '</div></div>';
     }
+    html += '<div class="cxh">武器</div>';
+    for (var wq=0; wq<WEAPON_DEFS.length; wq++){
+      var WC = state.codex.weapons[WEAPON_DEFS[wq].id]|0;
+      html += '<div class="cx' + (WC ? '' : ' lock') + '"><div class="nm">' +
+        (WC ? WEAPON_DEFS[wq].name : '？？？') + '</div><div class="ds">' +
+        (WC ? '已锻造 ' + WC + ' 次 · ' + WEAPON_DEFS[wq].desc : '还没锻造过') + '</div></div>';
+    }
   }
   _bagBodyEl.innerHTML = html;
   var tabs = document.querySelectorAll('#bag .tab');
@@ -4850,7 +4979,8 @@ function refreshBag(){
     tabs[t].classList.toggle('on', tabs[t].getAttribute('data-tab') === BAG_TAB);
   }
   var gn = document.getElementById('gearN');
-  if (gn) gn.textContent = (gearEquipped('pick') ? 1 : 0) + (gearEquipped('charm') ? 1 : 0);
+  if (gn) gn.textContent = (gearEquipped('pick') ? 1 : 0) + (gearEquipped('charm') ? 1 : 0) +
+    (state.weapon ? 1 : 0);
 }
 function toggleBag(on){
   _bagOn = (on === undefined) ? !_bagOn : !!on;
@@ -4881,6 +5011,8 @@ function toggleBag(on){
     else if (act === 'build') buildPart(+(b.getAttribute('data-i') || 0));
     else if (act === 'craftGear') craftGear(b.getAttribute('data-gid'));
     else if (act === 'equip') equipGear(b.getAttribute('data-gid'));
+    else if (act === 'craftWeapon') craftWeapon(b.getAttribute('data-wid'));
+    else if (act === 'equipWeapon') equipWeapon(b.getAttribute('data-wid'));
     if (act !== 'use') refreshBag();
   });
   refreshBag();
@@ -6464,58 +6596,102 @@ function skillLeft(name){
   return Math.max(0, (state.skillCd[name] || 0) - Date.now());
 }
 
-/* 大招阶梯：每个角色的技能都带一段范围攻击（原先纯辅助的角色由此补上输出）。
-   伤害 = 基础 × 阶数（Ⅰ/Ⅱ/Ⅲ 分别在 1 / 4 / 7 级），冷却每阶缩 12%，击退按角色手感给。 */
+/* 技能伤害表（第六批重做）：每个角色一套手感，数值按怪物血量定，
+   root 60 / rock 104 / boss 420，保证技能一轮能清小怪、三到五轮能磨掉 Boss。
+   kind: burst=单体爆发  aoe=范围清怪  control=位移/控制（附带眩晕）
+   d=Ⅰ阶基础伤害，r=判定半径（米），k=击退，stun=眩晕秒数 */
 var SKILL_ATK = {
-  prince:      { r: 5.0, d: 8,  c: '#ffd27a', k: 0.35 },
-  fox:         { r: 5.4, d: 7,  c: '#e8a866', k: 0.30 },
-  king:        { r: 6.0, d: 9,  c: '#c9a35b', k: 0.40 },
-  lamplighter: { r: 5.6, d: 8,  c: '#ffcf7a', k: 0.35 },
-  rose:        { r: 3.4, d: 12, c: '#d7f0b8', k: 0.55 },
-  snake:       { r: 4.2, d: 10, c: '#e6cf7a', k: 0.45 },
-  merchant:    { r: 3.6, d: 7,  c: '#ffe6a8', k: 0.30 },
-  geographer:  { r: 6.0, d: 9,  c: '#f2dfa8', k: 0.40 }
+  prince:      { kind:'burst',   r:4.2, d:110, c:'#ffd27a', k:0.55, label:'本质一击' },
+  fox:         { kind:'aoe',     r:8.0, d:62,  c:'#e8a866', k:0.35, label:'驯养之圈' },
+  king:        { kind:'control', r:8.5, d:64,  c:'#c9a35b', k:0.95, stun:3.0, label:'王命压制' },
+  lamplighter: { kind:'aoe',     r:9.5, d:74,  c:'#ffcf7a', k:0.30, label:'灯光燎原' },
+  rose:        { kind:'burst',   r:5.0, d:88,  c:'#d7f0b8', k:0.70, label:'荆棘爆刺' },
+  snake:       { kind:'control', r:7.0, d:68,  c:'#e6cf7a', k:0.55, stun:2.2, label:'蛇缠绞杀' },
+  merchant:    { kind:'aoe',     r:7.0, d:66,  c:'#ffe6a8', k:0.40, label:'钱币风暴' },
+  geographer:  { kind:'burst',   r:5.2, d:180, c:'#f2dfa8', k:0.60, label:'测绘坠星' }
 };
 function skillCdOf(name){
   var S = SKILL_DEFS[name];
   if (!S) return 0;
   return Math.round(S.cd * (1 - (skillTier() - 1) * 0.12));
 }
-function skillBlast(){
+/* 阶数倍率：Ⅰ/Ⅱ/Ⅲ = 1 / 1.7 / 2.6；再乘武器技能倍率 */
+function skillMult(){
+  var t = skillTier();
+  return (t === 3 ? 2.6 : (t === 2 ? 1.7 : 1)) * skillMul();
+}
+function skillBlast(origin){
   var A = SKILL_ATK[state.char];
   if (!A || !MOB_ENABLED) return 0;
-  var tier = skillTier(), dmg = A.d * tier, hit = 0;
-  for (var i = mobs.length - 1; i >= 0; i--){
-    var m = mobs[i];
+  var center = origin ? origin.clone().normalize() : playerUp.clone();
+  var dmg = Math.round(A.d * skillMult());
+  var hits = 0, total = 0, nearest = null, nd = 1e9, i, m, d;
+  if (A.kind === 'burst'){
+    for (i=0;i<mobs.length;i++){
+      m = mobs[i];
+      if (m.dead) continue;
+      d = Math.acos(clamp(m.up.dot(center), -1, 1)) * PLANET_R;
+      if (d <= A.r && d < nd){ nd = d; nearest = m; }
+    }
+  }
+  for (i = mobs.length - 1; i >= 0; i--){
+    m = mobs[i];
     if (m.dead) continue;
-    if (mobDist(m) > A.r) continue;
-    m.hp -= dmg;
-    m.hurt = 0.20;
-    m.lunge = 0.25;
-    m.atkCd = Math.max(m.atkCd, 0.7);
-    var away = new V3().crossVectors(playerUp, m.up);
+    d = Math.acos(clamp(m.up.dot(center), -1, 1)) * PLANET_R;
+    if (d > A.r) continue;
+    var hitDmgV = (A.kind === 'burst' && m !== nearest) ? Math.round(dmg * 0.32) : dmg;
+    m.hp -= hitDmgV;
+    m.hurt = 0.32;
+    m.lunge = 0.30;
+    m.atkCd = Math.max(m.atkCd, 0.8);
+    if (A.stun) m.stun = Math.max(m.stun || 0, A.stun);
+    var away = new V3().crossVectors(center, m.up);
     if (away.lengthSq() < 1e-6) away.copy(heading);
     away.normalize();
     var nudged = stepDir(m.up, away, A.k);
     if (groundRadiusAt(nudged) > 0) m.up.copy(nudged);
-    spawnSparkle(m.up.clone().multiplyScalar(m.r + 0.55), m.up, 10, A.c);
-    hit++;
+    /* 命中特效：每只怪身上炸一圈碎光，Boss 多一倍 */
+    spawnSparkle(m.up.clone().multiplyScalar(m.r + 0.55), m.up,
+      m.kind === 'boss' ? 26 : 14, A.c);
+    hits++; total += hitDmgV;
     if (m.hp <= 0) killMob(m);
   }
-  ringPulse(A.c, 0.35, A.r, 0.7);
-  return hit;
+  skill.lastHits = hits;
+  skill.lastDmg = total;
+  if (A.kind === 'control'){
+    /* 控制类：地面留一圈收缩的尘环，明确“压制”范围 */
+    ringPulse(A.c, 0.45, A.r, 1.0, center);
+    ringPulse('#fff1cf', A.r * 0.9, 0.4, 0.55, center);
+  } else {
+    ringPulse(A.c, 0.35, A.r, 0.7, center);
+  }
+  return hits;
+}
+/* 命中反馈：伤害数字横幅 + 按钮闪一下（近战也行） */
+function skillFeedback(hits, total, color, label){
+  var el = document.getElementById('hitBanner');
+  if (!el) return;
+  el.style.color = hits ? color : 'rgba(244,234,217,.82)';
+  el.textContent = hits
+    ? label + ' · 命中 ' + hits + ' 只 · ' + Math.round(total) + ' 伤害'
+    : label + ' · 空挥（判定圈里没有怪）';
+  el.classList.remove('pop');
+  void el.offsetWidth;
+  el.classList.add('pop');
 }
 
 /* 一次性扩散光环 */
 var fx = [];
-function ringPulse(color, r0, r1, life){
+function ringPulse(color, r0, r1, life, atUp){
   var m = new THREE.MeshBasicMaterial({
     color: new THREE.Color(color), transparent: true, opacity: .8,
     side: THREE.DoubleSide, depthWrite: false
   });
+  var upv = atUp ? atUp.clone().normalize() : playerUp.clone();
   var mesh = new THREE.Mesh(new THREE.RingGeometry(0.88, 1.0, 32), m);
-  mesh.position.copy(playerPos).addScaledVector(playerUp, 0.05);
-  mesh.quaternion.setFromUnitVectors(new V3(0,0,1), playerUp);
+  var rr = groundRadiusAt(upv);
+  mesh.position.copy(upv).multiplyScalar((rr > 0 ? rr : playerR) + 0.05);
+  mesh.quaternion.setFromUnitVectors(new V3(0,0,1), upv);
   mesh.scale.setScalar(r0);
   scene.add(mesh);
   fx.push({ mesh: mesh, t: 0, life: life, r0: r0, r1: r1 });
@@ -6826,35 +7002,36 @@ SKILL_IMPL.snake = {
 
 SKILL_IMPL.merchant = {
   cast: function(now){
-    /* 盘账换丸：2 星尘（不够就 2 块土）换 1 颗止渴丸；水满不收 */
-    if (state.water >= WATER_MAX){
-      toast('水囊是满的，商人不做砸手里的买卖。');
-      return false;
-    }
-    var paid = '';
-    if (state.dust >= 2){
-      state.dust -= 2;
-      paid = '2 星尘';
-    } else if (state.inv[0] + state.inv[1] >= 2){
-      var need = 2;
-      for (var ii=0; ii<2 && need>0; ii++){
-        var take = Math.min(need, state.inv[ii]);
-        state.inv[ii] -= take;
-        need -= take;
+    /* 盘账换丸：水不满时 2 星尘（或 2 块土）换 1 颗止渴丸；
+       水满也照样把账本甩出去——商人的技能现在有实打实的范围伤害。 */
+    var didTrade = false, paid = '';
+    if (state.water < WATER_MAX){
+      if (state.dust >= 2){
+        state.dust -= 2;
+        state.water += 1;
+        paid = '2 星尘';
+        didTrade = true;
+      } else if (state.inv[0] + state.inv[1] >= 2){
+        var need = 2;
+        for (var ii=0; ii<2 && need>0; ii++){
+          var take = Math.min(need, state.inv[ii]);
+          state.inv[ii] -= take;
+          need -= take;
+        }
+        state.water += 1;
+        paid = '2 块土';
+        didTrade = true;
       }
-      paid = '2 块土';
-    } else {
-      toast('星尘和土都不够 2 份，这买卖做不成。');
-      return false;
     }
-    state.water += 1;
     skill.tradeAt = now;
     refreshChips(); refreshInv();
     ringPulse('#e8c56a', 0.35, 3.4, 0.9);
     var handPos = playerPos.clone().addScaledVector(playerUp, 0.50).addScaledVector(heading, 0.24);
-    spawnCoins(handPos, playerUp, 7);
-    spawnSparkle(handPos, playerUp, 6, '#ffe6a8');
-    toast('盘账换丸：' + paid + ' 换到一颗止渴丸，水 +1。');
+    spawnCoins(handPos, playerUp, 9);
+    spawnSparkle(handPos, playerUp, 8, '#ffe6a8');
+    if (didTrade) toast('盘账换丸：' + paid + ' 换到一颗止渴丸，水 +1；顺手把钱袋甩了出去。');
+    else if (state.water >= WATER_MAX) toast('水囊是满的，商人不做砸手里的买卖——钱袋照样甩出去。');
+    else toast('星尘和土都不够 2 份，换不到水；钱袋还是甩了出去。');
     persist();
     return true;
   }
@@ -6948,7 +7125,14 @@ function useSkill(){
     return;
   }
   if (!triggerSkill(name)) return;
-  skillBlast();
+  /* 地理学家的坠星落在自己立的标上，其余角色以自身为中心 */
+  var A = SKILL_ATK[name] || {};
+  var origin = null;
+  if (name === 'geographer' && skill.markObj && skill.markObj.visible){
+    origin = skill.markObj.position.clone().normalize();
+  }
+  var hits = skillBlast(origin);
+  skillFeedback(hits, skill.lastDmg || 0, A.c || '#ffd9a0', A.label || S.name);
   state.skillCd[name] = Date.now() + skillCdOf(name);
   persist();
   updateSkillHud(true);
@@ -6961,12 +7145,15 @@ function updateSkillHud(force){
   if (!force && now - skill.lastHud < 100) return;
   skill.lastHud = now;
   var left = skillLeft(name);
-  skillNameEl.textContent = (S.short || S.name) + '·' + TIER_TXT[skillTier() - 1];
+  var A = SKILL_ATK[name] || {};
+  skillNameEl.textContent = (A.label || S.short || S.name) + '·' + TIER_TXT[skillTier() - 1];
   if (left > 0){
     skillEl.classList.add('cool');
+    skillEl.classList.remove('ready');
     skillCdEl.textContent = left >= 10000 ? Math.ceil(left/1000) : (Math.ceil(left/100)/10).toFixed(1);
   } else {
     skillEl.classList.remove('cool');
+    skillEl.classList.add('ready');
     skillCdEl.textContent = 'Q';
   }
   var p = 1 - left / skillCdOf(name);
@@ -7551,7 +7738,8 @@ function spawnMob(kind){
     group: M.group, mat: M.mat, body: M.body, legs: M.legs, barG: M.barG, bar: M.bar,
     bw: M.bw, baseY: 0.56 * K.scale,
     up: up, r: groundRadiusAt(up), dir: new V3(), hp: K.hp, maxHp: K.hp,
-    phase: Math.random() * 6.28, atkCd: K.atkCd, hurt: 0, lunge: 0, dead: 0, slam: 0, slamHit: false, dash: 0
+    phase: Math.random() * 6.28, atkCd: K.atkCd, hurt: 0, lunge: 0, dead: 0, slam: 0, slamHit: false, dash: 0,
+    stun: 0
   };
   m.dir = new V3().crossVectors(m.up, new V3(0, 1, 0));
   if (m.dir.lengthSq() < 1e-6) m.dir.set(1, 0, 0);
@@ -7620,16 +7808,17 @@ function clearMobs(cause){
 function attackNearby(){
   if (!MOB_ENABLED || ride.on || sunset.active || state.hp <= 0) return false;
   if (atkCd > 0) return false;
+  var w = equippedWeapon(), range = hitRange(), dmg = hitDmg();
   var best = null, bd = 1e9;
   for (var i=0;i<mobs.length;i++){
     var m = mobs[i];
     if (m.dead) continue;
     var d = mobDist(m);
-    if (d < HIT_RANGE && d < bd){ bd = d; best = m; }
+    if (d < range && d < bd){ bd = d; best = m; }
   }
   if (!best) return false;
-  atkCd = HIT_CD;
-  best.hp -= hitDmg();
+  atkCd = hitCd();
+  best.hp -= dmg;
   best.hurt = 0.16;
   best.atkCd = Math.max(best.atkCd, 0.55);
   best.lunge = 0.22;
@@ -7642,6 +7831,24 @@ function attackNearby(){
   var hitP = best.up.clone().multiplyScalar(best.r + 0.55);
   spawnSparkle(hitP, best.up, 8, '#ffd0a8');
   if (best.hp <= 0) killMob(best);
+  /* 石斧的顺劈：主目标旁边一圈再吃 55% 伤害 */
+  if (w && w.splash){
+    var splashHit = 0;
+    for (var j=mobs.length-1;j>=0;j--){
+      var s = mobs[j];
+      if (s.dead || s === best) continue;
+      var sd = Math.acos(clamp(s.up.dot(best.up), -1, 1)) * PLANET_R;
+      if (sd > w.splash) continue;
+      s.hp -= Math.round(dmg * 0.55);
+      s.hurt = 0.16;
+      s.lunge = 0.2;
+      spawnSparkle(s.up.clone().multiplyScalar(s.r + 0.5), s.up, 6, '#ffd0a8');
+      splashHit++;
+      if (s.hp <= 0) killMob(s);
+    }
+    if (splashHit) skillFeedback(splashHit + 1, dmg + Math.round(dmg * 0.55) * splashHit,
+      '#ffd0a8', '石斧顺劈');
+  }
   return true;
 }
 
@@ -7685,6 +7892,8 @@ function updateMobs(dt){
       m.mat.emissive.setHex(m.hurt > 0 ? 0xd8553a : 0x000000);
     }
     m.atkCd -= dt;
+    if (m.stun > 0) m.stun -= dt;
+    var stunned = m.stun > 0;
     if (m.lunge > 0) m.lunge -= dt;
     if (m.dash > 0) m.dash -= dt;
     if (m.barG && m.kind === 'boss'){
@@ -7696,14 +7905,14 @@ function updateMobs(dt){
     var range = K.range, aggro = K.aggro;
     var d = mobDist(m);
     /* 石甲虫：慢吞吞靠近，隔一段距离蓄力冲刺一次 */
-    if (m.kind === 'rock' && !ride.on && state.hp > 0 && m.dash <= 0 &&
+    if (m.kind === 'rock' && !stunned && !ride.on && state.hp > 0 && m.dash <= 0 &&
         m.atkCd <= 0 && d > range * 1.2 && d < 5.5){
       m.dash = 0.55;
       m.atkCd = 3.0;
       toast('石甲虫蓄力了——先闪开。');
     }
-    var chase = d < aggro && d > range * 0.9 && !sunset.active && state.hp > 0 && !ride.on;
-    if (!ride.on && state.hp > 0 && d > range * 0.9 && d < aggro){
+    var chase = d < aggro && d > range * 0.9 && !sunset.active && state.hp > 0 && !ride.on && !stunned;
+    if (!stunned && !ride.on && state.hp > 0 && d > range * 0.9 && d < aggro){
       var toP = new V3().copy(playerUp).addScaledVector(m.up, -playerUp.dot(m.up));
       if (toP.lengthSq() > 1e-8){
         toP.normalize();
@@ -7725,7 +7934,7 @@ function updateMobs(dt){
     }
     /* Boss：贴到 4.2 米就震地，落点结算一圈伤害 */
     if (m.kind === 'boss'){
-      if (!ride.on && state.hp > 0 && d <= 4.2 && m.atkCd <= 0 && m.slam <= 0){
+      if (!stunned && !ride.on && state.hp > 0 && d <= 4.2 && m.atkCd <= 0 && m.slam <= 0){
         m.slam = 0.6;
         m.slamHit = false;
         m.atkCd = 3.2;
@@ -7744,7 +7953,7 @@ function updateMobs(dt){
       }
     }
     /* 贴脸咬人（Boss 用震地，不咬） */
-    if (m.kind !== 'boss' && !ride.on && state.hp > 0 && d <= range && m.atkCd <= 0){
+    if (m.kind !== 'boss' && !stunned && !ride.on && state.hp > 0 && d <= range && m.atkCd <= 0){
       m.atkCd = K.atkCd;
       m.lunge = 0.3;
       var mouth = m.up.clone().multiplyScalar(m.r + 0.4);
@@ -8436,7 +8645,7 @@ if (/[?&]dbg=1/.test(location.search)){
     mobConst: function(){
       return { max: MOB_MAX, hp: MOB_HP, dmg: MOB_DMG, atkCd: MOB_ATK_CD, range: MOB_RANGE,
                speed: MOB_SPEED, aggro: MOB_AGGRO, spawnCd: MOB_SPAWN_CD,
-               hitDmg: hitDmg(), hitDmgBase: HIT_DMG, hitRange: HIT_RANGE, hitCd: HIT_CD };
+               hitDmg: hitDmg(), hitDmgBase: HIT_DMG, hitRange: hitRange(), hitCd: hitCd() };
     },
     mobsOff: function(){ MOB_ENABLED = false; clearMobs('test'); return true; },
     mobsOn: function(){ MOB_ENABLED = true; return true; },
@@ -8494,7 +8703,29 @@ if (/[?&]dbg=1/.test(location.search)){
     },
     blast: function(){
       var A = SKILL_ATK[state.char] || {};
-      return { hit: skillBlast(), tier: skillTier(), dmg: (A.d || 0) * skillTier(), r: A.r || 0 };
+      return { hit: skillBlast(), tier: skillTier(), dmg: Math.round((A.d || 0) * skillMult()),
+               r: A.r || 0, kind: A.kind || '', stun: A.stun || 0, total: skill.lastDmg || 0 };
+    },
+    /* 武器：测试与验收用 */
+    makeWeapon: function(id){
+      var ok = craftWeapon(id);
+      return { ok: ok, inv: state.inv.slice(), dust: state.dust, weapon: state.weapon,
+               own: state.weaponOwn, codex: state.codex.weapons };
+    },
+    skillTable: function(){ return JSON.parse(JSON.stringify(SKILL_ATK)); },
+    weapons: function(){
+      return WEAPON_DEFS.map(function(W){
+        return { id: W.id, name: W.name, own: state.weaponOwn[W.id] ? 1 : 0,
+                 eq: state.weapon === W.id, cost: W.cost, dust: W.dust,
+                 codex: (state.codex.weapons && state.codex.weapons[W.id]) | 0 };
+      });
+    },
+    weapon: function(id){
+      if (id === 'off'){ state.weapon = ''; refreshBag(); persist(); }
+      else if (id && weaponDef(id)){ state.weaponOwn[id] = 1; state.weapon = id; refreshBag(); persist(); }
+      var w = equippedWeapon();
+      return { id: state.weapon, name: w ? w.name : '', dmg: hitDmg(), range: +hitRange().toFixed(2),
+               cd: +hitCd().toFixed(2), skill: skillMul() };
     },
     /* 走真实技能路径（含冷却与技能自带的范围伤害） */
     useSkill: function(name){
