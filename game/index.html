@@ -327,7 +327,18 @@
   }
   #craftBtn b{color:#f0d7a8;font-weight:400;margin-left:5px}
   #craftBtn:active{transform:translateX(-50%) scale(.95)}
-  #craft{
+  #bagBtn{
+    position:fixed;left:calc(50% - 96px);
+    bottom:calc(env(safe-area-inset-bottom,0px) + 74px);
+    padding:5px 13px;border-radius:11px;z-index:6;
+    font-family:inherit;font-size:11px;letter-spacing:1px;
+    color:rgba(244,234,217,.86);
+    background:rgba(9,14,26,.55);border:1px solid rgba(232,199,149,.22);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  }
+  #bagBtn:active{transform:scale(.95)}
+  #bagBtn b{color:#f0d7a8;font-weight:400;margin-left:5px}
+  #craft,#bag{
     position:fixed;left:50%;top:50%;transform:translate(-50%,-46%) scale(.96);
     width:min(92vw,392px);max-height:74vh;overflow:auto;z-index:20;
     padding:14px 14px 12px;border-radius:16px;
@@ -336,8 +347,8 @@
     opacity:0;pointer-events:none;transition:opacity .16s ease,transform .16s ease;
     display:flex;flex-direction:column;gap:8px;
   }
-  #craft.on{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
-  #craft h3{margin:0 0 2px;font-size:13px;font-weight:400;letter-spacing:2px;color:#f0d7a8}
+  #craft.on,#bag.on{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
+  #craft h3,#bag h3{margin:0 0 2px;font-size:13px;font-weight:400;letter-spacing:2px;color:#f0d7a8}
   #craft .mats{display:flex;gap:10px;font-size:10.5px;color:rgba(244,234,217,.62)}
   #craftList{display:flex;flex-direction:column;gap:7px}
   .rc{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:10px;
@@ -353,9 +364,25 @@
   .rc button.b2{background:rgba(232,199,149,.16);color:#f0d7a8;
     border:1px solid rgba(232,199,149,.34)}
   .rc button:disabled{opacity:.30}
-  #craft .tip{font-size:10px;color:rgba(244,234,217,.45);line-height:1.5}
-  #craft .x{align-self:flex-end;font-size:11px;color:rgba(244,234,217,.6);
+  #craft .tip,#bag .tip{font-size:10px;color:rgba(244,234,217,.45);line-height:1.5}
+  #craft .x,#bag .x{align-self:flex-end;font-size:11px;color:rgba(244,234,217,.6);
     background:none;border:0;padding:2px 4px;font-family:inherit}
+  /* 行囊：标签页 / 图鉴条目 */
+  #bag .tabs{display:flex;gap:6px}
+  #bag .tab{
+    font-family:inherit;font-size:11px;padding:4px 10px;border-radius:9px;
+    color:rgba(244,234,217,.62);background:rgba(244,234,217,.06);
+    border:1px solid rgba(244,234,217,.12);
+  }
+  #bag .tab.on{color:#10141f;background:#e8c795;border-color:#e8c795}
+  #bagBody{display:flex;flex-direction:column;gap:7px}
+  .cx{display:flex;flex-direction:column;gap:2px;padding:7px 9px;border-radius:10px;
+      background:rgba(244,234,217,.045);border:1px solid rgba(244,234,217,.10)}
+  .cx .nm{font-size:11.5px;color:#f4ead9}
+  .cx .ds{font-size:10px;color:rgba(244,234,217,.5)}
+  .cx.lock{opacity:.42}
+  .cx .hd{font-size:10px;letter-spacing:1px;color:rgba(240,215,168,.75);margin:2px 0 0}
+  .cxh{font-size:10px;letter-spacing:2px;color:rgba(240,215,168,.68);margin:3px 0 -2px}
 
   /* ---------- 角色 / 换装 ---------- */
   #lookBtn{
@@ -600,6 +627,19 @@
   <div class="mats" id="craftMats"></div>
   <div id="craftList"></div>
   <div class="tip">挖土会挖到矿石，拔猴面包树给木材。做好的物件点「造」，直接摆在身前那格。</div>
+</div>
+
+<button id="bagBtn" aria-label="行囊">行囊<b id="gearN">0</b></button>
+<div id="bag">
+  <button class="x" id="bagClose">关闭</button>
+  <h3>行 囊</h3>
+  <div class="tabs">
+    <button class="tab on" data-tab="mat">材料</button>
+    <button class="tab" data-tab="gear">装备</button>
+    <button class="tab" data-tab="codex">图鉴</button>
+  </div>
+  <div id="bagBody"></div>
+  <div class="tip" id="bagTip">材料可以当土盖、进工坊做东西；装备带上就生效；图鉴记录你遇到过的怪、解锁的旅伴和造过的物件。</div>
 </div>
 
 <button id="act" aria-label="互动">
@@ -3714,6 +3754,9 @@ var state = {
   pos: null,
   inv: [0, 0, 0, 0],        /* 表层土 / 深层岩 / 木材 / 矿石 */
   parts: [0, 0, 0],         /* 做好的石阶 / 土墙 / 木桥 */
+  gear: { tool: 'shovel', charm: '' },   /* 已装备：镐子 / 护符 */
+  gearOwn: { pick: 0, charm: 0 },        /* 已拥有的装备 */
+  codex: { mobs: {}, parts: {} },        /* 图鉴：遇见过的怪、造过的物件 */
   sel: 0,
   digs: 0,
   placed: 0,
@@ -3835,6 +3878,28 @@ try {
         for (var _pv = 0; _pv < 3 && _pv < sv.parts.length; _pv++) state.parts[_pv] = Math.max(0, sv.parts[_pv]|0);
       }
       state.sel = clamp(sv.sel|0, 0, 3);
+      /* 装备与图鉴（第四批） */
+      state.gear = { tool: 'shovel', charm: '' };
+      if (sv.gear && typeof sv.gear === 'object'){
+        if (sv.gear.tool === 'pick') state.gear.tool = 'pick';
+        if (sv.gear.charm === 'charm') state.gear.charm = 'charm';
+      }
+      state.gearOwn = { pick: 0, charm: 0 };
+      if (sv.gearOwn && typeof sv.gearOwn === 'object'){
+        state.gearOwn.pick = sv.gearOwn.pick|0 ? 1 : 0;
+        state.gearOwn.charm = sv.gearOwn.charm|0 ? 1 : 0;
+      }
+      state.codex = { mobs: {}, parts: {} };
+      if (sv.codex && sv.codex.mobs && typeof sv.codex.mobs === 'object'){
+        ['root','rock','boss'].forEach(function(k){
+          if (sv.codex.mobs[k] > 0) state.codex.mobs[k] = sv.codex.mobs[k]|0;
+        });
+      }
+      if (sv.codex && sv.codex.parts && typeof sv.codex.parts === 'object'){
+        for (var _ck = 0; _ck < 3; _ck++){
+          if (sv.codex.parts[_ck] > 0) state.codex.parts[_ck] = sv.codex.parts[_ck]|0;
+        }
+      }
       /* 建好的物件先记下来，等工坊模块定义完再真正生成（顺序原因） */
       state._builtPending = Array.isArray(sv.built) ? sv.built : [];
       state.digs = sv.digs|0;
@@ -3915,6 +3980,7 @@ function persist(){
       unlocked: state.unlocked, qClaimed: state.qClaimed,
       inv: state.inv, sel: state.sel,
       parts: state.parts,
+      gear: state.gear, gearOwn: state.gearOwn, codex: state.codex,
       built: (typeof PARTS !== 'undefined' ? PARTS.map(function(P){
         return [P.kind, +P.dir.x.toFixed(4), +P.dir.y.toFixed(4), +P.dir.z.toFixed(4), +P.g.toFixed(3)];
       }) : []),
@@ -4071,6 +4137,8 @@ function tickVitals(dt, moving){
 /* 统一的掉血入口：第一批给口渴用，第二批战斗也走这里 */
 function hurtPlayer(amount, cause){
   if (state.hp <= 0) return;
+  /* 护心石：战斗伤害 -20%（口渴等自然损耗不减免） */
+  if (cause === 'mob' && state.gear && state.gear.charm === 'charm') amount *= 0.8;
   state.hp = Math.max(0, state.hp - amount);
   /* 持续伤害（口渴）不给每帧闪屏，只有成规模的伤害（战斗）才闪 */
   if (vitEl && amount >= 4){
@@ -4420,6 +4488,7 @@ function buildPart(ri){
   state.parts[ri]--;
   state.placed++;
   gainXp(4);
+  addCodex('part', String(ri));
   spawnDust(mesh.position.clone(), up);
   refreshCraft(); refreshInv(); checkQuests(); checkUnlocks(true);
   toast('造好了' + def.name + '（' + (state.parts[ri]|0) + ' 个' + def.name + '存货）。');
@@ -4512,6 +4581,7 @@ function refreshCraft(){
 }
 function toggleCraft(on){
   _craftOn = (on === undefined) ? !_craftOn : !!on;
+  if (_craftOn) toggleBag(false);
   refreshCraft();
   var el = document.getElementById('craft');
   if (el) el.classList.toggle('on', _craftOn);
@@ -4537,6 +4607,180 @@ function toggleCraft(on){
     PARTS.push({ kind: b[0]|0, dir: up.clone(), h: def.h, r: r, g: g, mesh: mesh });
   }
   refreshCraft();
+})();
+
+/* ---------------------------------------------------------------- 行囊（第四批）
+   三个页签：材料（查看 / 取用）、装备（做 / 穿脱，效果立刻生效）、
+   图鉴（遇见过的怪、解锁的旅伴、造过的物件）。 */
+var GEAR_DEFS = [
+  { id:'pick',  name:'石镐',   cost:[0,0,2,4], dust:0,  desc:'每挖 4 铲额外敲出一块矿石' },
+  { id:'charm', name:'护心石', cost:[0,0,0,6], dust:10, desc:'战斗受到的伤害 -20%' }
+];
+var MAT_DESC = ['盖土用的表层土，也能填坑', '深层的岩石，同样能盖土',
+                '拔猴面包树得到，工坊做桥用', '挖土挖到的矿石，工坊与装备用'];
+var BAG_TAB = 'mat', _bagOn = false, _bagBodyEl = null;
+
+function gearDef(id){
+  for (var i=0;i<GEAR_DEFS.length;i++) if (GEAR_DEFS[i].id === id) return GEAR_DEFS[i];
+  return null;
+}
+function gearEquipped(id){
+  if (id === 'pick') return state.gear.tool === 'pick';
+  if (id === 'charm') return state.gear.charm === 'charm';
+  return false;
+}
+function gearCostText(G){
+  var s = craftCostText(G.cost);
+  if (G.dust) s += ' · 星尘 ' + G.dust;
+  return s;
+}
+function canGear(id){
+  var G = gearDef(id);
+  if (!G || state.gearOwn[id]) return false;
+  for (var i=0;i<4;i++) if ((state.inv[i]|0) < G.cost[i]) return false;
+  if (G.dust && (state.dust|0) < G.dust) return false;
+  return true;
+}
+function craftGear(id){
+  var G = gearDef(id);
+  if (!G || state.gearOwn[id]) return;
+  if (!canGear(id)){ toast('材料不够，先去挖点矿。'); return; }
+  for (var i=0;i<4;i++) state.inv[i] -= G.cost[i];
+  if (G.dust) state.dust -= G.dust;
+  state.gearOwn[id] = 1;
+  if (id === 'pick') state.gear.tool = 'pick';
+  else state.gear.charm = 'charm';
+  refreshInv(); refreshChips(); refreshCraft(); refreshBag(); persist();
+  toast('做好了' + G.name + '，已经带上：' + G.desc + '。');
+}
+function equipGear(id){
+  if (!state.gearOwn[id]){ toast('先做出来才能带。'); return; }
+  if (id === 'pick') state.gear.tool = state.gear.tool === 'pick' ? 'shovel' : 'pick';
+  else state.gear.charm = state.gear.charm === 'charm' ? '' : 'charm';
+  var G = gearDef(id);
+  refreshBag(); persist();
+  toast(G.name + (gearEquipped(id) ? '带上了：' + G.desc + '。' : '收回行囊。'));
+}
+/* 图鉴：第一次遇见时落盘，之后只加计数 */
+function addCodex(kind, key){
+  if (!state.codex) state.codex = { mobs: {}, parts: {} };
+  var box = kind === 'mob' ? state.codex.mobs : state.codex.parts;
+  if (box[key] > 0) box[key]++;
+  else { box[key] = 1; persist(); }
+}
+function useInvItem(i){
+  if ((state.inv[i]|0) <= 0){ toast('这个还没有。'); return; }
+  if (i >= 2){ toggleBag(false); toggleCraft(true); return; }
+  state.sel = i;
+  refreshInv();
+  toggleBag(false);
+  toast('手上换成' + ITEM_NAME[i] + '——点「盖土」就能放下去。');
+}
+function refreshBag(){
+  if (!_bagBodyEl){
+    _bagBodyEl = document.getElementById('bagBody');
+    if (!_bagBodyEl) return;
+  }
+  var html = '';
+  if (BAG_TAB === 'mat'){
+    for (var i=0;i<4;i++){
+      html += '<div class="rc"><div><div class="nm">' + ITEM_NAME[i] + '</div>' +
+        '<div class="ct">' + MAT_DESC[i] + '</div></div><div class="grow"></div>' +
+        '<div class="own">×' + (state.inv[i]|0) + '</div>' +
+        '<button data-act="use" data-i="' + i + '"' + ((state.inv[i]|0) > 0 ? '' : ' disabled') + '>' +
+        (i < 2 ? '拿来盖' : '去工坊') + '</button></div>';
+    }
+    html += '<div class="cxh">造好的物件</div>';
+    for (var r=0;r<RECIPES.length;r++){
+      var R = RECIPES[r];
+      html += '<div class="rc"><div><div class="nm">' + R.name + '</div>' +
+        '<div class="ct">' + R.desc + '</div></div><div class="grow"></div>' +
+        '<div class="own">×' + (state.parts[r]|0) + '</div>' +
+        '<button class="b2" data-act="build" data-i="' + r + '"' +
+        ((state.parts[r]|0) > 0 ? '' : ' disabled') + '>造</button></div>';
+    }
+  } else if (BAG_TAB === 'gear'){
+    for (var g=0;g<GEAR_DEFS.length;g++){
+      var G = GEAR_DEFS[g], own = state.gearOwn[G.id] ? 1 : 0, eq = gearEquipped(G.id);
+      html += '<div class="rc"><div><div class="nm">' + G.name + (eq ? ' · 已装备' : '') +
+        '</div><div class="ct">' + G.desc + (own ? '' : ' · 需要 ' + gearCostText(G)) +
+        '</div></div><div class="grow"></div>';
+      if (!own){
+        html += '<button data-act="craftGear" data-gid="' + G.id + '"' +
+          (canGear(G.id) ? '' : ' disabled') + '>制作</button>';
+      } else {
+        html += '<button class="b2" data-act="equip" data-gid="' + G.id + '">' +
+          (eq ? '卸下' : '装备') + '</button>';
+      }
+      html += '</div>';
+    }
+    html += '<div class="cxh">当前效果</div><div class="cx"><div class="ds">' +
+      (state.gear.tool === 'pick' ? '石镐：每挖 4 铲额外敲出一块矿石' : '徒手：只有正常的出矿概率') +
+      '<br>' + (state.gear.charm === 'charm' ? '护心石：战斗受伤 -20%' : '无护符：战斗伤害不减免') +
+      '</div></div>';
+  } else {
+    html += '<div class="cxh">怪物</div>';
+    var mk = ['root','rock','boss'];
+    for (var m=0;m<mk.length;m++){
+      var K = MOB_KIND[mk[m]], n = (state.codex.mobs[mk[m]]|0);
+      html += '<div class="cx' + (n ? '' : ' lock') + '"><div class="nm">' +
+        (n ? K.name : '？？？') + '</div><div class="ds">' +
+        (n ? '已遇见 ' + n + ' 次' : '还没遇见') + '</div></div>';
+    }
+    html += '<div class="cxh">旅伴</div>';
+    for (var u=0;u<UNLOCK_DEFS.length;u++){
+      var D = UNLOCK_DEFS[u], on = isUnlocked(D.id);
+      html += '<div class="cx' + (on ? '' : ' lock') + '"><div class="nm">' + D.name +
+        '</div><div class="ds">' + (on ? '已解锁' : '未解锁 · ' + D.text) + '</div></div>';
+    }
+    html += '<div class="cxh">物件</div>';
+    for (var q=0;q<RECIPES.length;q++){
+      var cnt = (state.codex.parts[q]|0);
+      html += '<div class="cx' + (cnt ? '' : ' lock') + '"><div class="nm">' +
+        (cnt ? RECIPES[q].name : '？？？') + '</div><div class="ds">' +
+        (cnt ? '已造 ' + cnt + ' 次' : '还没造过') + '</div></div>';
+    }
+  }
+  _bagBodyEl.innerHTML = html;
+  var tabs = document.querySelectorAll('#bag .tab');
+  for (var t=0;t<tabs.length;t++){
+    tabs[t].classList.toggle('on', tabs[t].getAttribute('data-tab') === BAG_TAB);
+  }
+  var gn = document.getElementById('gearN');
+  if (gn) gn.textContent = (gearEquipped('pick') ? 1 : 0) + (gearEquipped('charm') ? 1 : 0);
+}
+function toggleBag(on){
+  _bagOn = (on === undefined) ? !_bagOn : !!on;
+  var el = document.getElementById('bag');
+  if (!el) return;
+  if (_bagOn) toggleCraft(false);
+  el.classList.toggle('on', _bagOn);
+  if (_bagOn) refreshBag();
+}
+(function bindBag(){
+  var btn = document.getElementById('bagBtn');
+  if (btn) btn.addEventListener('click', function(){ toggleBag(); });
+  var x = document.getElementById('bagClose');
+  if (x) x.addEventListener('click', function(){ toggleBag(false); });
+  var tabs = document.querySelectorAll('#bag .tab');
+  for (var i=0;i<tabs.length;i++){
+    tabs[i].addEventListener('click', function(){
+      BAG_TAB = this.getAttribute('data-tab');
+      refreshBag();
+    });
+  }
+  var body = document.getElementById('bagBody');
+  if (body) body.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('button[data-act]') : null;
+    if (!b) return;
+    var act = b.getAttribute('data-act');
+    if (act === 'use') useInvItem(+(b.getAttribute('data-i') || 0));
+    else if (act === 'build') buildPart(+(b.getAttribute('data-i') || 0));
+    else if (act === 'craftGear') craftGear(b.getAttribute('data-gid'));
+    else if (act === 'equip') equipGear(b.getAttribute('data-gid'));
+    if (act !== 'use') refreshBag();
+  });
+  refreshBag();
 })();
 
 var _chunkGeo = new THREE.BoxGeometry(0.12, 0.1, 0.12);
@@ -4650,12 +4894,18 @@ function digAt(){
   state.inv[deep ? 1 : 0]++;
   state.digs++;
   var hit = cr.c.clone().multiplyScalar(PLANET_R - cr.d + 0.16);
-  /* 挖到矿脉：每 5 铲左右蹦一块矿石（深层更容易出） */
+  /* 挖到矿脉：每 5 铲左右蹦一块矿石（深层更容易出）；石镐每 4 铲再额外敲出一块 */
   var _oreOdds = deep ? 3 : 5;
-  if (((state.digs * 7 + (cr.d * 10 | 0)) % _oreOdds) === 0){
+  var _oreHit = ((state.digs * 7 + (cr.d * 10 | 0)) % _oreOdds) === 0;
+  if (_oreHit){
     state.inv[3]++;
     toast('挖到一块' + ITEM_NAME[3] + '。可以去工坊换东西。');
     spawnSparkle(hit, playerUp.clone().negate(), 6, '#9fe6f7');
+  }
+  if (state.gear && state.gear.tool === 'pick' && (state.digs % 4) === 0){
+    state.inv[3]++;
+    toast('石镐又敲出一块' + ITEM_NAME[3] + '。');
+    spawnSparkle(hit, playerUp.clone().negate(), 5, '#ffe0a3');
   }
   gainXp(XP_DIG);
   if (cr.d >= DIG_DEPTH_MAX - 1e-4){
@@ -7141,6 +7391,7 @@ function spawnMob(kind){
   mobs.push(m);
   m.bornD = mobDist(m);
   m.bornP = playerUp.clone();
+  addCodex('mob', kind);
   if (kind === 'boss'){
     toast('地底传来闷响——巨岩守卫醒了。它会在脚下震地，别贴太近。', 'quest');
   } else if (kind === 'rock' && !mobHintedRock){
@@ -7964,6 +8215,17 @@ if (/[?&]dbg=1/.test(location.search)){
       });
     },
     bossDown: function(){ return { down: state.bossDown|0, kills: state.kills|0 }; },
+    /* 行囊 / 装备 / 图鉴 */
+    bag: function(open){
+      if (open !== undefined) toggleBag(!!open); else refreshBag();
+      return { on: _bagOn, tab: BAG_TAB };
+    },
+    bagTab: function(t){ BAG_TAB = t || 'mat'; refreshBag(); return BAG_TAB; },
+    codex: function(){ return JSON.parse(JSON.stringify(state.codex)); },
+    gear: function(){ return { gear: state.gear, own: state.gearOwn }; },
+    makeGear: function(id){ craftGear(id); return { inv: state.inv.slice(), dust: state.dust, own: state.gearOwn, gear: state.gear }; },
+    equipGear: function(id){ equipGear(id); return state.gear; },
+    takeHit: function(n, cause){ hurtPlayer(n || 1, cause || 'mob'); return state.hp; },
     /* 直接放一只指定种类的怪到面前（测试用） */
     spawn: function(kind, dist){
       MOB_ENABLED = true;
