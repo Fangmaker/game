@@ -174,10 +174,10 @@
   /* ---------- 动作按钮 ---------- */
   #act{
     position:fixed;
-    right:calc(env(safe-area-inset-right,0px) + 26px);
-    bottom:calc(env(safe-area-inset-bottom,0px) + 34px);
-    width:74px;height:74px;border-radius:50%;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+    right:calc(env(safe-area-inset-right,0px) + 12px);
+    bottom:calc(env(safe-area-inset-bottom,0px) + 118px);
+    width:58px;height:58px;border-radius:50%;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
     background:radial-gradient(circle at 40% 32%,rgba(209,86,79,.30),rgba(209,86,79,.08));
     border:1px solid rgba(240,190,170,.45);
     color:#fbeadd;font-family:inherit;
@@ -188,8 +188,8 @@
   }
   #act.on{opacity:1;transform:scale(1);pointer-events:auto;}
   #act:active{transform:scale(.93);background:radial-gradient(circle at 40% 32%,rgba(209,86,79,.5),rgba(209,86,79,.15));}
-  #act svg{width:22px;height:22px}
-  #act em{font-style:normal;font-size:11px;letter-spacing:1.5px;opacity:.92}
+  #act svg{width:18px;height:18px}
+  #act em{font-style:normal;font-size:9.5px;letter-spacing:1px;opacity:.92}
   #act .k{
     position:absolute;top:-8px;right:-4px;
     font-size:9.5px;letter-spacing:.5px;
@@ -199,35 +199,75 @@
   }
   body.touch #act .k{display:none;}
 
-  /* ---------- 技能按钮 ---------- */
-  #skill{
+  /* ---------- 普攻键（MOBA 右下主键） ---------- */
+  #atkBtn{
     position:fixed;
-    right:calc(env(safe-area-inset-right,0px) + 96px);
-    bottom:calc(env(safe-area-inset-bottom,0px) + 122px);
-    width:64px;height:64px;border-radius:50%;
+    right:calc(env(safe-area-inset-right,0px) + 14px);
+    bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
+    width:96px;height:96px;border-radius:50%;
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+    background:radial-gradient(circle at 38% 30%,rgba(255,214,154,.40),rgba(209,86,79,.18) 58%,rgba(209,86,79,.05));
+    border:1.5px solid rgba(255,205,150,.78);
+    color:#fbeadd;font-family:inherit;
+    box-shadow:0 0 22px rgba(255,190,120,.18),inset 0 0 20px rgba(255,214,154,.10);
+    z-index:7;touch-action:none;
+    -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+    transition:transform .1s ease,box-shadow .2s ease,border-color .2s ease,background .2s;
+  }
+  #atkBtn svg{width:34px;height:34px;pointer-events:none}
+  #atkBtn em{font-style:normal;font-size:11px;letter-spacing:2px;opacity:.95;pointer-events:none}
+  #atkBtn.on{transform:scale(.94);background:radial-gradient(circle at 38% 30%,rgba(255,214,154,.56),rgba(209,86,79,.28) 58%,rgba(209,86,79,.10))}
+  #atkBtn.locked{border-color:#ffd27a;box-shadow:0 0 28px rgba(255,210,122,.42),inset 0 0 20px rgba(255,214,154,.16)}
+
+  /* ---------- 技能按钮（环绕普攻） ---------- */
+  .skbtn{
+    position:fixed;width:58px;height:58px;border-radius:50%;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
     background:radial-gradient(circle at 40% 32%,rgba(232,199,149,.26),rgba(232,199,149,.06));
     border:1px solid rgba(232,199,149,.48);
     color:#fbeadd;font-family:inherit;
-    z-index:6;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
-    transition:opacity .2s,background .2s;
+    z-index:6;touch-action:none;overflow:visible;
+    -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+    transition:transform .1s,background .2s,border-color .2s,opacity .2s;
   }
-  #skill:active{transform:scale(.94)}
-  #skill .k{
+  .skbtn:active{transform:scale(.94)}
+  .skbtn .ico{display:block;line-height:0;pointer-events:none}
+  .skbtn .ico svg{width:21px;height:21px}
+  .skbtn .nm{
+    font-style:normal;font-size:9px;letter-spacing:0;opacity:.95;
+    max-width:54px;text-align:center;line-height:1.05;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;
+  }
+  .skbtn .tier{
+    position:absolute;left:-2px;top:-4px;
+    font-size:8.5px;font-weight:400;padding:1px 4px;border-radius:4px;
+    background:rgba(7,11,22,.72);border:1px solid rgba(244,234,217,.18);
+    color:rgba(244,234,217,.82);pointer-events:none;
+  }
+  .skbtn .cdtxt{
+    position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    font-size:14px;font-weight:600;letter-spacing:.5px;color:#ffe6b8;
+    text-shadow:0 1px 8px rgba(0,0,0,.9);pointer-events:none;
+  }
+  .skbtn .k{
     position:absolute;top:-8px;right:-4px;
     font-size:9.5px;padding:2px 5px;border-radius:4px;
     background:rgba(7,11,22,.72);border:1px solid rgba(244,234,217,.2);
     color:rgba(244,234,217,.8);
   }
-  #skill em{font-style:normal;font-size:10px;letter-spacing:.5px;opacity:.95;max-width:56px;text-align:center;line-height:1.1}
-  #skill b{font-size:13px;font-weight:500;letter-spacing:.5px;color:#ffd9a0}
-  #skill.cool{opacity:.92}
-  #skill.cool em{opacity:.5}
-  #skill.ready{animation:skillReady 1.6s ease-in-out infinite}
+  .skbtn.cool{background:rgba(16,22,34,.42);border-color:rgba(232,199,149,.20)}
+  .skbtn.cool .ico,.skbtn.cool .nm{opacity:.30}
+  .skbtn.cool .cdtxt{display:flex}
+  .skbtn.ready{animation:skillReady 1.6s ease-in-out infinite}
   @keyframes skillReady{
     0%,100%{box-shadow:0 0 0 0 rgba(255,214,154,0)}
     55%{box-shadow:0 0 18px 3px rgba(255,214,154,.42)}
   }
+  /* 三个技能键围绕普攻键：左 → 左上 → 正上 */
+  #skill{right:calc(env(safe-area-inset-right,0px) + 118px);bottom:calc(env(safe-area-inset-bottom,0px) + 16px)}
+  #sk2{right:calc(env(safe-area-inset-right,0px) + 112px);bottom:calc(env(safe-area-inset-bottom,0px) + 84px)}
+  #sk3{right:calc(env(safe-area-inset-right,0px) + 88px);bottom:calc(env(safe-area-inset-bottom,0px) + 152px)}
+  body.touch .skbtn .k{display:none}
   /* 命中反馈：技能打中时在准星下方弹一行伤害 */
   #hitBanner{
     position:fixed;left:50%;top:54%;transform:translate(-50%,0) scale(.86);
@@ -278,20 +318,20 @@
   /* ---------- 工具（挖 / 放） ---------- */
   #tools{
     position:fixed;
-    right:calc(env(safe-area-inset-right,0px) + 26px);
-    bottom:calc(env(safe-area-inset-bottom,0px) + 122px);
+    right:calc(env(safe-area-inset-right,0px) + 186px);
+    bottom:calc(env(safe-area-inset-bottom,0px) + 18px);
     display:flex;flex-direction:column;gap:8px;z-index:6;
   }
   .tool{
-    width:58px;height:58px;border-radius:50%;position:relative;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+    width:46px;height:46px;border-radius:50%;position:relative;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;
     background:radial-gradient(circle at 40% 30%,rgba(232,199,149,.20),rgba(232,199,149,.05));
     border:1px solid rgba(232,199,149,.30);color:#f4ead9;font-family:inherit;
     -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
     transition:transform .12s ease,opacity .2s ease,background .2s;
   }
-  .tool svg{width:21px;height:21px;display:block}
-  .tool em{font-style:normal;font-size:10px;letter-spacing:1.5px;opacity:.86}
+  .tool svg{width:18px;height:18px;display:block}
+  .tool em{font-style:normal;font-size:9px;letter-spacing:1px;opacity:.86}
   .tool:active{transform:scale(.92);background:radial-gradient(circle at 40% 30%,rgba(232,199,149,.42),rgba(232,199,149,.13));}
   /* 变灰：只压图标和文字，别把“原因”小条一起压透明（否则等于没写） */
   .tool.off{border-color:rgba(232,199,149,.13);background:rgba(16,22,34,.30)}
@@ -502,27 +542,32 @@
   #netGo.danger{border-color:rgba(209,86,79,.55);background:rgba(209,86,79,.16)}
   #netClose{width:100%;margin-top:8px;padding:9px;border-radius:10px;border:1px solid rgba(244,234,217,.16);background:rgba(244,234,217,.05);color:rgba(244,234,217,.7);font-family:inherit;font-size:12px;letter-spacing:3px;text-indent:3px}
 
+  /* 横屏（844×390 主验收尺寸）：右侧键位按 MOBA 布局固定，只收摇杆与行囊 */
   @media (orientation:landscape) and (max-height:520px){
-    #joy{width:84px;height:84px;left:calc(env(safe-area-inset-left,0px) + 16px);bottom:calc(env(safe-area-inset-bottom,0px) + 14px)}
+    #joy{width:84px;height:84px;left:calc(env(safe-area-inset-left,0px) + 14px);bottom:calc(env(safe-area-inset-bottom,0px) + 12px)}
     #knob{width:36px;height:36px;margin:-18px 0 0 -18px}
-    #act{width:76px;height:76px;right:calc(env(safe-area-inset-right,0px) + 16px);bottom:calc(env(safe-area-inset-bottom,0px) + 22px)}
-    #tools{right:calc(env(safe-area-inset-right,0px) + 100px);bottom:calc(env(safe-area-inset-bottom,0px) + 108px);gap:6px}
-    .tool{width:46px;height:46px}
-    #skill{right:calc(env(safe-area-inset-right,0px) + 96px);bottom:calc(env(safe-area-inset-bottom,0px) + 18px);width:54px;height:54px}
     #quests{top:calc(env(safe-area-inset-top,0px) + 62px);gap:2px}
     .q{font-size:10px}
     #inv{bottom:calc(env(safe-area-inset-bottom,0px) + 10px)}
     .slot{width:40px;height:40px}
   }
 
-  @media (max-height:560px){
-    #joy{width:92px;height:92px}
-    #knob{width:40px;height:40px;margin:-20px 0 0 -20px}
-    #act{width:64px;height:64px}
-    #tools{bottom:calc(env(safe-area-inset-bottom,0px) + 100px)}
-    .tool{width:50px;height:50px}
-    #quests{top:calc(env(safe-area-inset-top,0px) + 88px);gap:3px}
-    .q{font-size:10.5px}
+  /* 竖屏：右侧键位改为纵向分层，避免和行囊/工坊打架 */
+  @media (orientation:portrait){
+    #joy{width:88px;height:88px;left:calc(env(safe-area-inset-left,0px) + 10px);bottom:calc(env(safe-area-inset-bottom,0px) + 14px)}
+    #knob{width:38px;height:38px;margin:-19px 0 0 -19px}
+    #inv{bottom:calc(env(safe-area-inset-bottom,0px) + 10px)}
+    .slot{width:40px;height:40px}
+    #craftBtn{left:auto;right:10px;transform:none;bottom:calc(env(safe-area-inset-bottom,0px) + 332px)}
+    #bagBtn{left:auto;right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 376px)}
+    #craftBtn:active{transform:scale(.95)}
+    #atkBtn{width:92px;height:92px;right:calc(env(safe-area-inset-right,0px) + 10px);bottom:calc(env(safe-area-inset-bottom,0px) + 60px)}
+    #act{width:56px;height:56px;right:calc(env(safe-area-inset-right,0px) + 10px);bottom:calc(env(safe-area-inset-bottom,0px) + 160px)}
+    #tools{right:calc(env(safe-area-inset-right,0px) + 10px);bottom:calc(env(safe-area-inset-bottom,0px) + 224px)}
+    #skill,#sk2,#sk3{width:56px;height:56px;right:calc(env(safe-area-inset-right,0px) + 104px)}
+    #skill{bottom:calc(env(safe-area-inset-bottom,0px) + 60px)}
+    #sk2{bottom:calc(env(safe-area-inset-bottom,0px) + 126px)}
+    #sk3{bottom:calc(env(safe-area-inset-bottom,0px) + 192px)}
   }
 </style>
 </head>
@@ -676,11 +721,47 @@
   <em id="actLabel">浇水</em>
 </button>
 
-<button id="skill" aria-label="角色技能">
-  <i id="skillRing"></i>
+<button id="atkBtn" aria-label="普通攻击">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#ffe6b8" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 12h12.5"/><path d="M11.5 6.5 17 12l-5.5 5.5"/><path d="M19.6 6.4v11.2" opacity=".55"/>
+  </svg>
+  <em>攻击</em>
+</button>
+
+<button id="skill" class="skbtn" aria-label="角色技能">
+  <i id="skillRing" class="ring"></i>
+  <span class="ico">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#ffe6b8" stroke-width="1.5" stroke-linejoin="round">
+      <path d="M12 3.2 14.1 9.9 20.8 12 14.1 14.1 12 20.8 9.9 14.1 3.2 12 9.9 9.9Z"/>
+    </svg>
+  </span>
+  <em id="skillName" class="nm">本质一击</em>
+  <b id="skillTier" class="tier">Ⅰ</b>
+  <span id="skillCd" class="cdtxt"></span>
   <span class="k">Q</span>
-  <em id="skillName">看见本质</em>
-  <b id="skillCd"></b>
+</button>
+<button id="sk2" class="skbtn" aria-label="闪身">
+  <i class="ring"></i>
+  <span class="ico">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#bfe6ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.5 12h12"/><path d="M12.5 6.5 18 12l-5.5 5.5"/><path d="M4.5 7.5h4M4.5 16.5h4" opacity=".55"/>
+    </svg>
+  </span>
+  <em class="nm">闪身</em>
+  <b class="tier">Ⅰ</b>
+  <span class="cdtxt"></span>
+</button>
+<button id="sk3" class="skbtn" aria-label="重击">
+  <i class="ring"></i>
+  <span class="ico">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#ffd0a8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14.2 3.6 20.4 9.8 17 13.2 10.8 7Z"/>
+      <path d="M9.9 9.6 4.1 15.4a2.6 2.6 0 0 0 3.7 3.7l5.8-5.8"/>
+    </svg>
+  </span>
+  <em class="nm">重击</em>
+  <b class="tier">Ⅰ</b>
+  <span class="cdtxt"></span>
 </button>
 
 <div id="hitBanner"></div>
@@ -4416,7 +4497,7 @@ function refreshLv(){
     if (lvNumEl) lvNumEl.textContent = 'Lv ' + state.lv;
     _lvShown.lv = state.lv;
     /* 升级后技能名里的阶数立刻更新，不用等下一次 100ms 轮询 */
-    if (typeof skillNameEl !== 'undefined' && skillNameEl) updateSkillHud(true);
+    if (typeof SKILL_ATK !== 'undefined' && SKILL_ATK) updateSkillHud(true);
   }
   if (pct !== _lvShown.pct){
     if (lvXpEl) lvXpEl.style.width = pct + '%';
@@ -6753,13 +6834,221 @@ var skill = {
 };
 state.skillCd = state.skillCd || {};
 
-var skillEl = document.getElementById('skill');
-var skillNameEl = document.getElementById('skillName');
-var skillCdEl = document.getElementById('skillCd');
-var skillRingEl = document.getElementById('skillRing');
-
 function skillLeft(name){
   return Math.max(0, (state.skillCd[name] || 0) - Date.now());
+}
+/* MOBA 键位：本命技 + 闪身 + 重击。sig 沿用原存档键，另外两个用 x: 前缀。 */
+var SKILL_SLOTS = [
+  { id:'sig',   name:'技能' },
+  { id:'dash',  name:'闪身', cd:6500, color:'#bfe6ff', r:4.6, ang:Math.PI*0.22 },
+  { id:'heavy', name:'重击', cd:9000, color:'#ffd0a8', r:3.4, ang:Math.PI*2/3 }
+];
+function skillSlotDef(id){
+  for (var i=0;i<SKILL_SLOTS.length;i++) if (SKILL_SLOTS[i].id === id) return SKILL_SLOTS[i];
+  return null;
+}
+function slotCdOf(id){
+  if (id === 'sig') return skillCdOf(state.char);
+  var D = skillSlotDef(id);
+  return D ? Math.round(D.cd * (1 - (skillTier() - 1) * 0.12)) : 0;
+}
+function slotLeftOf(id){
+  if (id === 'sig') return skillLeft(state.char);
+  return Math.max(0, (state.skillCd['x:' + id] || 0) - Date.now());
+}
+
+function skRefs(id){
+  var el = document.getElementById(id);
+  return { el: el, name: el.querySelector('.nm'), tier: el.querySelector('.tier'),
+           cd: el.querySelector('.cdtxt'), ring: el.querySelector('.ring') };
+}
+var SK_UI = { sig: skRefs('skill'), dash: skRefs('sk2'), heavy: skRefs('sk3') };
+
+/* ---------------- 技能范围指示器（按住显示，拖动取消） ---------------- */
+var rangeInd = { g:null, fill:null, edge:null, sectorFill:null, sectorEdge:null,
+                 on:false, cancel:false, r:4, ang:1, color:'#ffd27a' };
+function ensureRangeInd(){
+  if (rangeInd.g) return;
+  var g = new THREE.Group();
+  function mat(op){
+    return new THREE.MeshBasicMaterial({ color:new THREE.Color('#ffd27a'), transparent:true,
+      opacity:op, depthWrite:false, side:THREE.DoubleSide });
+  }
+  var fill = new THREE.Mesh(new THREE.CircleGeometry(1, 48), mat(.10));
+  var edge = new THREE.Mesh(new THREE.RingGeometry(.965, 1, 64), mat(.85));
+  var sf = new THREE.Mesh(new THREE.RingGeometry(.02, 1, 48, 1, -.5, 1), mat(.14));
+  var se = new THREE.Mesh(new THREE.RingGeometry(.95, 1, 48, 1, -.5, 1), mat(.75));
+  fill.renderOrder = edge.renderOrder = sf.renderOrder = se.renderOrder = 2;
+  g.add(fill); g.add(edge); g.add(sf); g.add(se);
+  g.visible = false;
+  scene.add(g);
+  rangeInd.g = g; rangeInd.fill = fill; rangeInd.edge = edge;
+  rangeInd.sectorFill = sf; rangeInd.sectorEdge = se;
+}
+function rangeIndSetSector(ang){
+  if (!rangeInd.sectorFill) return;
+  rangeInd.sectorFill.geometry.dispose();
+  rangeInd.sectorEdge.geometry.dispose();
+  rangeInd.sectorFill.geometry = new THREE.RingGeometry(.02, 1, 48, 1, -ang/2, ang);
+  rangeInd.sectorEdge.geometry = new THREE.RingGeometry(.95, 1, 48, 1, -ang/2, ang);
+}
+function tintRangeInd(cancel){
+  if (!rangeInd.fill) return;
+  var c = new THREE.Color(cancel ? '#ff7b6b' : (rangeInd.color || '#ffd27a'));
+  rangeInd.fill.material.color.copy(c); rangeInd.fill.material.opacity = cancel ? .22 : .15;
+  rangeInd.edge.material.color.copy(c); rangeInd.edge.material.opacity = 1;
+  rangeInd.sectorFill.material.color.copy(c); rangeInd.sectorFill.material.opacity = cancel ? .30 : .22;
+  rangeInd.sectorEdge.material.color.copy(c); rangeInd.sectorEdge.material.opacity = 1;
+  rangeInd.cancel = !!cancel;
+}
+function placeRangeInd(){
+  if (!rangeInd.g || !rangeInd.on) return;
+  var up = playerUp;
+  rangeInd.g.position.copy(up).multiplyScalar(playerR + 0.06);
+  var h = facingDir();
+  var side = new V3().crossVectors(up, h).normalize();
+  tmpM1.makeBasis(h, side, up);
+  rangeInd.g.quaternion.setFromRotationMatrix(tmpM1);
+}
+function showRangeInd(slot){
+  ensureRangeInd();
+  var shape = 'circle', r = 4, ang = 0, color = '#ffd27a';
+  if (slot === 'sig'){
+    var A = SKILL_ATK[state.char] || {};
+    r = A.r || 4; color = A.c || '#ffd27a';
+  } else if (slot === 'heavy'){
+    shape = 'sector'; r = 3.4; ang = Math.PI*2/3; color = '#ffd0a8';
+  } else {
+    shape = 'sector'; r = 4.6; ang = Math.PI*0.22; color = '#bfe6ff';
+  }
+  rangeInd.on = true; rangeInd.r = r; rangeInd.ang = ang; rangeInd.color = color;
+  rangeInd.fill.visible = rangeInd.edge.visible = (shape === 'circle');
+  rangeInd.sectorFill.visible = rangeInd.sectorEdge.visible = (shape === 'sector');
+  if (shape === 'sector') rangeIndSetSector(ang);
+  tintRangeInd(false);
+  rangeInd.g.scale.setScalar(r);
+  rangeInd.g.visible = true;
+  placeRangeInd();
+}
+function hideRangeInd(){
+  rangeInd.on = false;
+  rangeInd.cancel = false;
+  if (rangeInd.g) rangeInd.g.visible = false;
+}
+function updateRangeInd(){ if (rangeInd.on) placeRangeInd(); }
+
+/* 闪身 / 重击：都吃普攻的武器加成（伤害、射程、攻速） */
+function castDash(){
+  var dir = facingDir();
+  var from = playerUp.clone();
+  for (var i=0;i<12;i++){
+    var cand = stepDir(playerUp, dir, 4.6/12);
+    if (groundRadiusAt(cand) <= 0) break;
+    playerUp.copy(cand);
+  }
+  playerR = Math.max(groundRadiusAt(playerUp), PLANET_R - DIG_DEPTH_MAX);
+  falling = false; playerVR = 0;
+  var sp = playerUp.clone().multiplyScalar(playerR);
+  if (collideSolids(sp, 0.34)) playerUp.copy(sp).normalize();
+  heading.copy(dir);
+  var rr = new V3().crossVectors(playerUp, dir).normalize();
+  tmpM1.makeBasis(rr, playerUp, dir);
+  tmpQ1.setFromRotationMatrix(tmpM1);
+  headingQ.copy(tmpQ1);
+  for (var s=0;s<=4;s++){
+    var p = from.clone().lerp(playerUp, s/4);
+    if (p.lengthSq() < 1e-8) continue;
+    p.normalize();
+    var gr = groundRadiusAt(p);
+    spawnSparkle(p.clone().multiplyScalar((gr > 0 ? gr : playerR) + 0.05), p, 4, '#bfe6ff');
+  }
+  var hits = 0, total = 0;
+  for (var j=mobs.length-1;j>=0;j--){
+    var m = mobs[j];
+    if (m.dead) continue;
+    if (Math.acos(clamp(m.up.dot(playerUp), -1, 1)) * PLANET_R > 1.6) continue;
+    var dmg = Math.round(hitDmg() * 0.5);
+    m.hp -= dmg; m.hurt = .16; m.lunge = .2;
+    spawnSparkle(m.up.clone().multiplyScalar(m.r + 0.5), m.up, 6, '#bfe6ff');
+    hits++; total += dmg;
+    if (m.hp <= 0) killMob(m);
+  }
+  ringPulse('#bfe6ff', 0.3, 2.4, 0.55);
+  if (hits) skillFeedback(hits, total, '#bfe6ff', '闪身');
+  return true;
+}
+function castHeavy(){
+  var dir = facingDir();
+  heading.copy(dir);
+  var rr = new V3().crossVectors(playerUp, dir).normalize();
+  tmpM1.makeBasis(rr, playerUp, dir);
+  tmpQ1.setFromRotationMatrix(tmpM1);
+  headingQ.copy(tmpQ1);
+  var R = 3.4, half = Math.PI/3, hits = 0, total = 0;
+  for (var i=mobs.length-1;i>=0;i--){
+    var m = mobs[i];
+    if (m.dead) continue;
+    if (Math.acos(clamp(m.up.dot(playerUp), -1, 1)) * PLANET_R > R) continue;
+    var md = m.up.clone().addScaledVector(playerUp, -m.up.dot(playerUp));
+    if (md.lengthSq() < 1e-8) continue;
+    md.normalize();
+    if (Math.acos(clamp(md.dot(dir), -1, 1)) > half) continue;
+    var dmg = Math.round(hitDmg() * 2.2);
+    m.hp -= dmg; m.hurt = .22; m.lunge = .32; m.atkCd = Math.max(m.atkCd, .75);
+    var away = new V3().crossVectors(playerUp, m.up);
+    if (away.lengthSq() < 1e-6) away.copy(dir);
+    away.normalize();
+    var nudged = stepDir(m.up, away, 0.9);
+    if (groundRadiusAt(nudged) > 0) m.up.copy(nudged);
+    spawnSparkle(m.up.clone().multiplyScalar(m.r + 0.6), m.up, 12, '#ffd0a8');
+    hits++; total += dmg;
+    if (m.hp <= 0) killMob(m);
+  }
+  ringPulse('#ffd0a8', 0.35, R, 0.7);
+  skillFeedback(hits, total, '#ffd0a8', '蓄力重击');
+  return true;
+}
+function useSkillSlot(id){
+  if (id === 'sig'){ useSkill(); return; }
+  var D = skillSlotDef(id);
+  if (!D) return;
+  if (slotLeftOf(id) > 0){ toast('「' + D.name + '」还在冷却。'); return; }
+  if (ride.on || sunset.active || state.hp <= 0) return;
+  if (!(id === 'dash' ? castDash() : castHeavy())) return;
+  state.skillCd['x:' + id] = Date.now() + slotCdOf(id);
+  persist();
+  updateSkillHud(true);
+}
+/* 按住预览范围，松手释放；离起点超过 46px 视为拖动取消 */
+function bindSkillHold(el, slot){
+  if (!el) return;
+  var hold = { id:null, x:0, y:0, cancel:false };
+  el.addEventListener('pointerdown', function(e){
+    if (hold.id !== null) return;
+    e.preventDefault();
+    hold.id = e.pointerId; hold.x = e.clientX; hold.y = e.clientY; hold.cancel = false;
+    try { el.setPointerCapture(e.pointerId); } catch(err){}
+    el.classList.add('on');
+    showRangeInd(slot);
+  });
+  el.addEventListener('pointermove', function(e){
+    if (e.pointerId !== hold.id) return;
+    var d = Math.hypot(e.clientX - hold.x, e.clientY - hold.y);
+    if (d > 46 && !hold.cancel){ hold.cancel = true; tintRangeInd(true); }
+    else if (d <= 40 && hold.cancel){ hold.cancel = false; tintRangeInd(false); }
+  });
+  function finish(cancel){
+    if (hold.id === null) return;
+    var wasCancel = cancel || hold.cancel;
+    hold.id = null;
+    el.classList.remove('on');
+    hideRangeInd();
+    if (wasCancel) toast('已取消');
+    else useSkillSlot(slot);
+  }
+  el.addEventListener('pointerup', function(){ finish(false); });
+  el.addEventListener('pointercancel', function(){ finish(true); });
+  el.addEventListener('lostpointercapture', function(){ if (hold.id !== null) finish(true); });
 }
 
 /* 技能伤害表（第六批重做）：每个角色一套手感，数值按怪物血量定，
@@ -7310,21 +7599,30 @@ function updateSkillHud(force){
   var now = Date.now();
   if (!force && now - skill.lastHud < 100) return;
   skill.lastHud = now;
-  var left = skillLeft(name);
+  var tierTxt = TIER_TXT[skillTier() - 1];
   var A = SKILL_ATK[name] || {};
-  skillNameEl.textContent = (A.label || S.short || S.name) + '·' + TIER_TXT[skillTier() - 1];
-  if (left > 0){
-    skillEl.classList.add('cool');
-    skillEl.classList.remove('ready');
-    skillCdEl.textContent = left >= 10000 ? Math.ceil(left/1000) : (Math.ceil(left/100)/10).toFixed(1);
-  } else {
-    skillEl.classList.remove('cool');
-    skillEl.classList.add('ready');
-    skillCdEl.textContent = 'Q';
+  for (var i=0;i<SKILL_SLOTS.length;i++){
+    var D = SKILL_SLOTS[i], ui = SK_UI[D.id];
+    if (!ui || !ui.el) continue;
+    var left = slotLeftOf(D.id), cd = Math.max(1, slotCdOf(D.id));
+    ui.name.textContent = D.id === 'sig'
+      ? (A.label || S.short || S.name)
+      : D.name;
+    ui.tier.textContent = tierTxt;
+    if (left > 0){
+      ui.el.classList.add('cool');
+      ui.el.classList.remove('ready');
+      ui.cd.textContent = left >= 10000 ? Math.ceil(left/1000) : (Math.ceil(left/100)/10).toFixed(1);
+    } else {
+      ui.el.classList.remove('cool');
+      ui.el.classList.add('ready');
+      ui.cd.textContent = '';
+    }
+    var p = 1 - left / cd;
+    ui.ring.style.background = 'conic-gradient(' +
+      (D.id === 'sig' ? 'rgba(255,214,154,.85)' : (D.id === 'dash' ? 'rgba(191,230,255,.8)' : 'rgba(255,208,168,.85)')) +
+      ' ' + (p*360).toFixed(1) + 'deg, rgba(255,255,255,.06) 0)';
   }
-  var p = 1 - left / skillCdOf(name);
-  skillRingEl.style.background = 'conic-gradient(rgba(255,214,154,.85) ' +
-    (p*360).toFixed(1) + 'deg, rgba(255,255,255,.06) 0)';
 }
 
 /* 蛇的主动落点：灯塔脚下 1.85 米，顺手把朝向和镜头一起摆正 */
@@ -7359,7 +7657,10 @@ function updateSkills(dt){
   }
 }
 
-skillEl.addEventListener('click', useSkill);
+bindSkillHold(document.getElementById('skill'), 'sig');
+bindSkillHold(document.getElementById('sk2'), 'dash');
+bindSkillHold(document.getElementById('sk3'), 'heavy');
+bindAtkHold();
 updateSkillHud(true);
 applyChar(state.char, true);
 if (!hadSave) setTimeout(openLook, 900);
@@ -8097,6 +8398,138 @@ function attackNearby(){
   return true;
 }
 
+/* ---------------- MOBA 普攻：按住连击 / 自动锁最近怪 / 空挥 ---------------- */
+var combat = { atkHold:false, lock:null };
+var LOCK_ACQUIRE_D = 9, LOCK_LOST_D = 11;
+var lockFx = { mesh:null, up:new V3(), r:0.5, s:1, fade:0, pop:1 };
+var LOCK_Z = new V3(0, 0, 1);
+
+function attackAllowed(){
+  return MOB_ENABLED && !ride.on && !sunset.active && state.hp > 0;
+}
+function nearestMob(maxD){
+  var best = null, bd = 1e9;
+  for (var i=0;i<mobs.length;i++){
+    var m = mobs[i];
+    if (m.dead) continue;
+    var d = mobDist(m);
+    if (d <= maxD && d < bd){ bd = d; best = m; }
+  }
+  return best;
+}
+function facingDir(){
+  var d = heading.clone().addScaledVector(playerUp, -heading.dot(playerUp));
+  if (d.lengthSq() < 1e-8) d.copy(camF).addScaledVector(playerUp, -camF.dot(playerUp));
+  if (d.lengthSq() < 1e-8){
+    d.set(0, 1, 0).cross(playerUp);
+    if (d.lengthSq() < 1e-8) d.set(1, 0, 0);
+  }
+  return d.normalize();
+}
+function tangentTo(m){
+  var t = m.up.clone().addScaledVector(playerUp, -m.up.dot(playerUp));
+  if (t.lengthSq() < 1e-8) return facingDir();
+  return t.normalize();
+}
+function faceMob(m, dt){
+  var d = tangentTo(m);
+  heading.copy(d);
+  var side = new V3().crossVectors(playerUp, d).normalize();
+  tmpM1.makeBasis(side, playerUp, d);
+  tmpQ1.setFromRotationMatrix(tmpM1);
+  headingQ.slerp(tmpQ1, 1 - Math.exp(-18 * dt));
+}
+function ensureLockRing(){
+  if (lockFx.mesh) return;
+  var mat = new THREE.MeshBasicMaterial({ color:new THREE.Color('#ffd27a'), transparent:true,
+    opacity:0, depthWrite:false, side:THREE.DoubleSide });
+  var mesh = new THREE.Mesh(new THREE.RingGeometry(0.70, 0.86, 40), mat);
+  mesh.visible = false;
+  scene.add(mesh);
+  lockFx.mesh = mesh;
+}
+function setLock(m){
+  if (combat.lock === m) return;
+  var old = combat.lock;
+  if (old && old.barG) old.barG.scale.setScalar(1);
+  combat.lock = m;
+  if (!m) return;
+  ensureLockRing();
+  if (!old) lockFx.fade = 0;
+  if (lockFx.up.lengthSq() < 1e-6) lockFx.up.copy(m.up);
+  lockFx.pop = 0;
+  if (m.barG) m.barG.scale.setScalar(1.12);
+}
+function updateLockFx(dt){
+  if (!lockFx.mesh) return;
+  var m = combat.lock;
+  var k = 1 - Math.exp(-18 * dt);
+  if (m && !m.dead){
+    lockFx.up.lerp(m.up, k);
+    if (lockFx.up.lengthSq() < 1e-8) lockFx.up.copy(m.up);
+    lockFx.up.normalize();
+    lockFx.r += (m.r - lockFx.r) * k;
+    var s = (m.K && m.K.scale ? m.K.scale : 1) * 1.0;
+    lockFx.s += (s - lockFx.s) * k;
+    lockFx.fade = Math.min(1, lockFx.fade + dt/0.18);
+    lockFx.pop = Math.min(1, lockFx.pop + dt/0.18);
+  } else {
+    lockFx.fade = Math.max(0, lockFx.fade - dt/0.18);
+  }
+  lockFx.mesh.visible = lockFx.fade > 0.01;
+  if (!lockFx.mesh.visible) return;
+  lockFx.mesh.position.copy(lockFx.up).multiplyScalar(lockFx.r + 0.07);
+  lockFx.mesh.quaternion.setFromUnitVectors(LOCK_Z, lockFx.up);
+  lockFx.mesh.scale.setScalar(lockFx.s * (0.72 + 0.28 * lockFx.pop));
+  lockFx.mesh.material.opacity = 0.9 * lockFx.fade;
+}
+/* 一次普攻：有目标先锁定并转向；够得着走原 attackNearby（武器加成全保留），
+   够不着或没目标就朝面朝方向空挥 */
+function combatAttack(){
+  if (!attackAllowed() || atkCd > 0) return false;
+  var range = hitRange();
+  var near = nearestMob(LOCK_ACQUIRE_D);
+  if (near){
+    setLock(near);
+    faceMob(near, 0.2);
+  }
+  if (near && mobDist(near) <= range && attackNearby()) return true;
+  atkCd = hitCd();
+  var dir = near ? tangentTo(near) : facingDir();
+  var p = playerUp.clone().multiplyScalar(playerR + 0.02)
+    .addScaledVector(dir, Math.min(range * 0.75, 1.9));
+  spawnSparkle(p, playerUp, 6, '#ffe3ac');
+  return true;
+}
+function updateCombat(dt){
+  if (combat.atkHold && atkCd <= 0 && attackAllowed()) combatAttack();
+  if (combat.lock && (combat.lock.dead || mobDist(combat.lock) > LOCK_LOST_D)) setLock(null);
+  if (combat.atkHold && combat.lock && !combat.lock.dead) faceMob(combat.lock, dt);
+  updateLockFx(dt);
+  var btn = document.getElementById('atkBtn');
+  if (btn) btn.classList.toggle('locked', !!(combat.lock && !combat.lock.dead));
+}
+function bindAtkHold(){
+  var el = document.getElementById('atkBtn');
+  if (!el) return;
+  function down(e){
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    combat.atkHold = true;
+    el.classList.add('on');
+    if (atkCd <= 0) combatAttack();
+    try { el.setPointerCapture(e.pointerId); } catch(err){}
+  }
+  function up(){
+    combat.atkHold = false;
+    el.classList.remove('on');
+  }
+  el.addEventListener('pointerdown', down);
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+  el.addEventListener('lostpointercapture', up);
+}
+
 function updateMobs(dt){
   if (atkCd > 0) atkCd -= dt;
   if (MOB_ENABLED && !sunset.active && state.hp > 0){
@@ -8312,6 +8745,8 @@ function updatePlanet(dt){
   tickVitals(dt, moving);
   /* 怪物刷新 / 追击 / 咬人 */
   updateMobs(dt);
+  /* MOBA 普攻按住连击、自动锁定与锁定圈 */
+  updateCombat(dt);
 
   /* 镜头基准平行运输，永不翻转。
      prevUp 与 playerUp 接近对跖（挖穿瞬移）时 setFromUnitVectors 轴不唯一，
@@ -8634,6 +9069,7 @@ function tick(){
   netTick(dt);
   updateSkills(dt);
   updateFx(dt);
+  updateRangeInd();
   updateSkillHud(false);
   updateParticles(dt);
   if (terrainDirty){
@@ -8928,6 +9364,34 @@ if (/[?&]dbg=1/.test(location.search)){
       return { d: +mobDist(m).toFixed(2), hp: m.hp };
     },
     hit: function(){ return attackNearby(); },
+    /* MOBA 操控：按住普攻、锁定、技能槽、范围指示器 */
+    combat: function(){
+      return {
+        atkHold: combat.atkHold, atkCd: +atkCd.toFixed(2),
+        lock: combat.lock ? { kind: combat.lock.kind, hp: +combat.lock.hp.toFixed(1),
+                              d: +mobDist(combat.lock).toFixed(2) } : null,
+        ring: { visible: !!(lockFx.mesh && lockFx.mesh.visible),
+                fade: +lockFx.fade.toFixed(2), pop: +lockFx.pop.toFixed(2),
+                pos: lockFx.mesh ? lockFx.mesh.position.toArray().map(function(v){ return +v.toFixed(2); }) : null }
+      };
+    },
+    atkDown: function(){ combat.atkHold = true; if (atkCd <= 0) combatAttack(); return true; },
+    atkUp: function(){ combat.atkHold = false; return true; },
+    cast: function(slot){ slot = slot || 'sig'; useSkillSlot(slot); return { slot: slot, left: +slotLeftOf(slot).toFixed(0) }; },
+    skills: function(){
+      return SKILL_SLOTS.map(function(D){
+        var left = slotLeftOf(D.id), ui = SK_UI[D.id];
+        return { id: D.id,
+                 name: D.id === 'sig' ? ((SKILL_ATK[state.char] || {}).label || '技能') : D.name,
+                 tier: skillTier(), left: +left.toFixed(0), cd: slotCdOf(D.id),
+                 ready: left <= 0, cool: ui.el.classList.contains('cool'),
+                 readyCls: ui.el.classList.contains('ready'), text: ui.cd.textContent };
+      });
+    },
+    rangeInfo: function(){
+      return { on: rangeInd.on, cancel: rangeInd.cancel, r: rangeInd.r,
+               visible: !!(rangeInd.g && rangeInd.g.visible), color: rangeInd.color };
+    },
     /* 等级 / 技能阶梯（第三批） */
     lv: function(seed){
       if (seed){
